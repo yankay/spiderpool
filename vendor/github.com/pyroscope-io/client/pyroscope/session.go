@@ -2,6 +2,8 @@ package pyroscope
 
 import (
 	"bytes"
+	"github.com/pyroscope-io/client/internal/alignedticker"
+	"github.com/pyroscope-io/client/internal/cumulativepprof"
 	"runtime"
 	"runtime/pprof"
 	"sync"
@@ -13,16 +15,18 @@ import (
 
 type Session struct {
 	// configuration, doesn't change
-	upstream      upstream.Upstream
-	sampleRate    uint32
-	profileTypes  []ProfileType
-	uploadRate    time.Duration
-	disableGCRuns bool
-	pid           int
+	upstream               upstream.Upstream
+	sampleRate             uint32
+	profileTypes           []ProfileType
+	uploadRate             time.Duration
+	disableGCRuns          bool
+	disableCumulativeMerge bool
+	DisableAutomaticResets bool
 
 	logger    Logger
 	stopOnce  sync.Once
 	stopCh    chan struct{}
+	flushCh   chan *flush
 	trieMutex sync.Mutex
 
 	// these things do change:
@@ -38,17 +42,26 @@ type Session struct {
 	lastGCGeneration uint32
 	appName          string
 	startTime        time.Time
+
+	mergers *cumulativepprof.Mergers
 }
 
 type SessionConfig struct {
-	Upstream       upstream.Upstream
-	Logger         Logger
-	AppName        string
-	Tags           map[string]string
-	ProfilingTypes []ProfileType
-	DisableGCRuns  bool
-	SampleRate     uint32
-	UploadRate     time.Duration
+	Upstream               upstream.Upstream
+	Logger                 Logger
+	AppName                string
+	Tags                   map[string]string
+	ProfilingTypes         []ProfileType
+	DisableGCRuns          bool
+	DisableAutomaticResets bool
+	DisableCumulativeMerge bool
+	SampleRate             uint32
+	UploadRate             time.Duration
+}
+
+type flush struct {
+	wg   sync.WaitGroup
+	wait bool
 }
 
 func NewSession(c SessionConfig) (*Session, error) {
@@ -58,21 +71,25 @@ func NewSession(c SessionConfig) (*Session, error) {
 	}
 
 	ps := &Session{
-		upstream:      c.Upstream,
-		appName:       appName,
-		profileTypes:  c.ProfilingTypes,
-		disableGCRuns: c.DisableGCRuns,
-		sampleRate:    c.SampleRate,
-		uploadRate:    c.UploadRate,
-		stopCh:        make(chan struct{}),
-		logger:        c.Logger,
-		cpuBuf:        &bytes.Buffer{},
-		memBuf:        &bytes.Buffer{},
-		goroutinesBuf: &bytes.Buffer{},
-		mutexBuf:      &bytes.Buffer{},
-		blockBuf:      &bytes.Buffer{},
-	}
+		upstream:               c.Upstream,
+		appName:                appName,
+		profileTypes:           c.ProfilingTypes,
+		disableGCRuns:          c.DisableGCRuns,
+		DisableAutomaticResets: c.DisableAutomaticResets,
+		disableCumulativeMerge: c.DisableCumulativeMerge,
+		sampleRate:             c.SampleRate,
+		uploadRate:             c.UploadRate,
+		stopCh:                 make(chan struct{}),
+		flushCh:                make(chan *flush),
+		logger:                 c.Logger,
+		cpuBuf:                 &bytes.Buffer{},
+		memBuf:                 &bytes.Buffer{},
+		goroutinesBuf:          &bytes.Buffer{},
+		mutexBuf:               &bytes.Buffer{},
+		blockBuf:               &bytes.Buffer{},
 
+		mergers: cumulativepprof.NewMergers(),
+	}
 	return ps, nil
 }
 
@@ -105,14 +122,23 @@ func mergeTagsWithAppName(appName string, tags map[string]string) (string, error
 
 // revive:disable-next-line:cognitive-complexity complexity is fine
 func (ps *Session) takeSnapshots() {
-	ticker := time.NewTicker(time.Second / time.Duration(ps.sampleRate))
-	defer ticker.Stop()
+	var automaticResetTicker <-chan time.Time
+	if ps.DisableAutomaticResets {
+		automaticResetTicker = make(chan time.Time)
+	} else {
+		t := alignedticker.NewAlignedTicker(ps.uploadRate)
+		automaticResetTicker = t.C
+		defer t.Stop()
+	}
 	for {
 		select {
-		case <-ticker.C:
-			if ps.isDueForReset() {
-				ps.reset()
-			}
+		case endTime := <-automaticResetTicker:
+			ps.reset(ps.startTime, endTime)
+		case f := <-ps.flushCh:
+			ps.reset(ps.startTime, ps.truncatedTime())
+			ps.upstream.Flush()
+			f.wg.Done()
+			break
 		case <-ps.stopCh:
 			return
 		}
@@ -125,19 +151,12 @@ func copyBuf(b []byte) []byte {
 	return r
 }
 
-func (ps *Session) Start() error {
-	ps.reset()
+func (ps *Session) start() error {
+	t := ps.truncatedTime()
+	ps.reset(t, t)
 
 	go ps.takeSnapshots()
 	return nil
-}
-
-func (ps *Session) isDueForReset() bool {
-	// TODO: duration should be either taken from config or ideally passed from server
-	now := time.Now().Truncate(ps.uploadRate)
-	start := ps.startTime.Truncate(ps.uploadRate)
-
-	return !start.Equal(now)
 }
 
 func (ps *Session) isCPUEnabled() bool {
@@ -185,17 +204,17 @@ func (ps *Session) isGoroutinesEnabled() bool {
 	return false
 }
 
-func (ps *Session) reset() {
-	now := time.Now()
-	endTime := now.Truncate(ps.uploadRate)
-	startTime := endTime.Add(-ps.uploadRate)
+func (ps *Session) reset(startTime, endTime time.Time) {
+
 	ps.logger.Debugf("profiling session reset %s", startTime.String())
 
 	// first reset should not result in an upload
 	if !ps.startTime.IsZero() {
 		ps.uploadData(startTime, endTime)
 	} else {
-		pprof.StartCPUProfile(ps.cpuBuf)
+		if ps.isCPUEnabled() {
+			pprof.StartCPUProfile(ps.cpuBuf)
+		}
 	}
 
 	ps.startTime = endTime
@@ -253,7 +272,7 @@ func (ps *Session) uploadData(startTime, endTime time.Time) {
 			curBlockBuf := copyBuf(ps.blockBuf.Bytes())
 			ps.blockBuf.Reset()
 			if ps.blockPrevBytes != nil {
-				ps.upstream.Upload(&upstream.UploadJob{
+				job := &upstream.UploadJob{
 					Name:        ps.appName,
 					StartTime:   startTime,
 					EndTime:     endTime,
@@ -273,7 +292,9 @@ func (ps *Session) uploadData(startTime, endTime time.Time) {
 							Cumulative:  true,
 						},
 					},
-				})
+				}
+				ps.mergeCumulativeProfile(ps.mergers.Block, job)
+				ps.upstream.Upload(job)
 			}
 			ps.blockPrevBytes = curBlockBuf
 		}
@@ -285,7 +306,7 @@ func (ps *Session) uploadData(startTime, endTime time.Time) {
 			curMutexBuf := copyBuf(ps.mutexBuf.Bytes())
 			ps.mutexBuf.Reset()
 			if ps.mutexPrevBytes != nil {
-				ps.upstream.Upload(&upstream.UploadJob{
+				job := &upstream.UploadJob{
 					Name:        ps.appName,
 					StartTime:   startTime,
 					EndTime:     endTime,
@@ -305,7 +326,9 @@ func (ps *Session) uploadData(startTime, endTime time.Time) {
 							Cumulative:  true,
 						},
 					},
-				})
+				}
+				ps.mergeCumulativeProfile(ps.mergers.Mutex, job)
+				ps.upstream.Upload(job)
 			}
 			ps.mutexPrevBytes = curMutexBuf
 		}
@@ -324,8 +347,8 @@ func (ps *Session) uploadData(startTime, endTime time.Time) {
 			pprof.WriteHeapProfile(ps.memBuf)
 			curMemBytes := copyBuf(ps.memBuf.Bytes())
 			ps.memBuf.Reset()
-			if ps.memPrevBytes != nil {
-				ps.upstream.Upload(&upstream.UploadJob{
+			if ps.memPrevBytes != nil { //todo does this if statement loose first 10s profile?
+				job := &upstream.UploadJob{
 					Name:        ps.appName,
 					StartTime:   startTime,
 					EndTime:     endTime,
@@ -334,12 +357,35 @@ func (ps *Session) uploadData(startTime, endTime time.Time) {
 					Format:      upstream.FormatPprof,
 					Profile:     curMemBytes,
 					PrevProfile: ps.memPrevBytes,
-				})
+				}
+				ps.mergeCumulativeProfile(ps.mergers.Heap, job)
+				ps.upstream.Upload(job)
 			}
 			ps.memPrevBytes = curMemBytes
 			ps.lastGCGeneration = currentGCGeneration
 		}
 	}
+}
+
+func (ps *Session) mergeCumulativeProfile(m *cumulativepprof.Merger, job *upstream.UploadJob) {
+	// todo should we filter by enabled ps.profileTypes to reduce profile size ? maybe add a separate option ?
+	if ps.disableCumulativeMerge {
+		return
+	}
+	p, err := m.Merge(job.PrevProfile, job.Profile)
+	if err != nil {
+		ps.logger.Errorf("failed to merge %s profiles %v", m.Name, err)
+		return
+	}
+	var prof bytes.Buffer
+	err = p.Write(&prof)
+	if err != nil {
+		ps.logger.Errorf("failed to serialize merged %s profiles %v", m.Name, err)
+		return
+	}
+	job.PrevProfile = nil
+	job.Profile = prof.Bytes()
+	job.SampleTypeConfig = m.SampleTypeConfig
 }
 
 func (ps *Session) Stop() {
@@ -369,6 +415,22 @@ func (ps *Session) uploadLastBitOfData(now time.Time) {
 			Profile:         copyBuf(ps.cpuBuf.Bytes()),
 		})
 	}
+}
+
+func (ps *Session) flush(wait bool) {
+	f := &flush{
+		wg:   sync.WaitGroup{},
+		wait: wait,
+	}
+	f.wg.Add(1)
+	ps.flushCh <- f
+	if wait {
+		f.wg.Wait()
+	}
+}
+
+func (ps *Session) truncatedTime() time.Time {
+	return time.Now().Truncate(ps.uploadRate)
 }
 
 func numGC() uint32 {
