@@ -11,14 +11,18 @@ import (
 )
 
 type Config struct {
-	ApplicationName string // e.g backend.purchases
-	Tags            map[string]string
-	ServerAddress   string // e.g http://pyroscope.services.internal:4040
-	AuthToken       string // specify this token when using pyroscope cloud
-	SampleRate      uint32
-	Logger          Logger
-	ProfileTypes    []ProfileType
-	DisableGCRuns   bool // this will disable automatic runtime.GC runs between getting the heap profiles
+	ApplicationName        string // e.g backend.purchases
+	Tags                   map[string]string
+	ServerAddress          string // e.g http://pyroscope.services.internal:4040
+	AuthToken              string // specify this token when using pyroscope cloud
+	SampleRate             uint32 // todo this one is not used
+	UploadRate             time.Duration
+	Logger                 Logger
+	ProfileTypes           []ProfileType
+	DisableGCRuns          bool // this will disable automatic runtime.GC runs between getting the heap profiles
+	DisableAutomaticResets bool // disable automatic profiler reset every 10 seconds. Reset manually by calling Flush method
+	// Deprecated: the field is ignored and does nothing
+	DisableCumulativeMerge bool
 }
 
 type Profiler struct {
@@ -47,7 +51,7 @@ func Start(cfg Config) (*Profiler, error) {
 	rc := remote.Config{
 		AuthToken: cfg.AuthToken,
 		Address:   cfg.ServerAddress,
-		Threads:   4,
+		Threads:   5, // per each profile type upload
 		Timeout:   30 * time.Second,
 		Logger:    cfg.Logger,
 	}
@@ -56,15 +60,21 @@ func Start(cfg Config) (*Profiler, error) {
 		return nil, err
 	}
 
+	if cfg.UploadRate == 0 {
+		// For backward compatibility.
+		cfg.UploadRate = 10 * time.Second
+	}
+
 	sc := SessionConfig{
-		Upstream:       uploader,
-		Logger:         cfg.Logger,
-		AppName:        cfg.ApplicationName,
-		Tags:           cfg.Tags,
-		ProfilingTypes: cfg.ProfileTypes,
-		DisableGCRuns:  cfg.DisableGCRuns,
-		SampleRate:     cfg.SampleRate,
-		UploadRate:     10 * time.Second,
+		Upstream:               uploader,
+		Logger:                 cfg.Logger,
+		AppName:                cfg.ApplicationName,
+		Tags:                   cfg.Tags,
+		ProfilingTypes:         cfg.ProfileTypes,
+		DisableGCRuns:          cfg.DisableGCRuns,
+		DisableAutomaticResets: cfg.DisableAutomaticResets,
+		SampleRate:             cfg.SampleRate,
+		UploadRate:             cfg.UploadRate,
 	}
 
 	cfg.Logger.Infof("starting profiling session:")
@@ -86,11 +96,16 @@ func Start(cfg Config) (*Profiler, error) {
 	return &Profiler{session: s, uploader: uploader}, nil
 }
 
-// Stop stops continious profiling session and uploads the remaining profiling data
+// Stop stops continuous profiling session and uploads the remaining profiling data
 func (p *Profiler) Stop() error {
 	p.session.Stop()
 	p.uploader.Stop()
 	return nil
+}
+
+// Flush resets current profiling session. if wait is true, also waits for all profiles to be uploaded synchronously
+func (p *Profiler) Flush(wait bool) {
+	p.session.flush(wait)
 }
 
 type LabelSet = pprof.LabelSet
