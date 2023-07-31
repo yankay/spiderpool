@@ -157,7 +157,7 @@
       return errors.Required({{ if .Path }}{{ .Path }}{{ else }}""{{ end }}, {{ printf "%q" .Location }}, nil)
     }
     {{- else }}
-    if err := validate.Required{{ if and (eq .GoType "string") (not .IsNullable) }}String{{ end }}({{ if .Path }}{{ .Path }}{{ else }}""{{ end }}, {{ printf "%q" .Location }}, {{ if not (or .IsAnonymous .IsNullable) }}{{ .GoType }}({{ end }}{{ .ReceiverName }}.{{ pascalize .Name }}{{ if not (or .IsAnonymous .IsNullable) }}){{ end }}); err != nil {
+    if err := validate.Required{{ if and (eq .GoType "string") (not .IsNullable) }}String{{ end }}({{ if .Path }}{{ .Path }}{{ else }}""{{ end }}, {{ printf "%q" .Location }}, {{ if not (or .IsAnonymous .IsNullable) }}{{ .GoType }}({{ end }}{{ .ValueExpression }}{{ if not (or .IsAnonymous .IsNullable) }}){{ end }}); err != nil {
       return err
     }
     {{- end }}
@@ -281,7 +281,7 @@
       return errors.Required({{ if .Path }}{{ .Path }}{{ else }}""{{ end }}, {{ printf "%q" .Location }}, nil)
     }
     {{- else }}
-    if err := validate.Required{{ if and (eq .GoType "string") (not .IsNullable) }}String{{ end }}({{ if .Path }}{{ .Path }}{{ else }}""{{ end }}, {{ printf "%q" .Location }}, {{ if not (or .IsAnonymous .IsNullable) }}{{ .GoType }}({{ end }}{{ .ReceiverName }}.{{ pascalize .Name }}{{ if not (or .IsAnonymous .IsNullable) }}){{ end }}); err != nil {
+    if err := validate.Required{{ if and (eq .GoType "string") (not .IsNullable) }}String{{ end }}({{ if .Path }}{{ .Path }}{{ else }}""{{ end }}, {{ printf "%q" .Location }}, {{ if not (or .IsAnonymous .IsNullable) }}{{ .GoType }}({{ end }}{{ .ValueExpression }}{{ if not (or .IsAnonymous .IsNullable) }}){{ end }}); err != nil {
       return err
     }
     {{- end }}
@@ -451,6 +451,15 @@
       {{- if and .IsNullable (not .IsMapNullOverride) }}
       if {{ .ValueExpression }} != nil {
       {{- end }}
+      {{ if not .Required }}
+              {{- if .IsInterface }}
+      if {{ .ValueExpression }} == nil { // not required
+              {{- else }}
+      if swag.IsZero({{ .ValueExpression }}) { // not required
+              {{- end }}
+        return nil
+      }
+      {{ end }}
       if err := {{.ValueExpression }}.ContextValidate(ctx, formats); err != nil {
         if ve, ok := err.(*errors.Validation); ok {
           return ve.ValidateName({{ if .Path }}{{ .Path }}{{ else }}""{{ end }})
