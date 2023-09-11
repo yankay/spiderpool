@@ -42,7 +42,7 @@ jobs:
       begin_tag: ${{ steps.get_ref.outputs.begin_tag }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -91,7 +91,7 @@ jobs:
       CHANGELOG_TMP_FILE: './_temp_changelog'
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -155,7 +155,7 @@ jobs:
     needs: [generate_changelog]
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ env.DEST_BRANCH }}
 
