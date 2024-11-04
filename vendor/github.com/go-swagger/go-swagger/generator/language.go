@@ -3,7 +3,7 @@ package generator
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"path"
@@ -141,7 +141,7 @@ func (l *LanguageOpts) baseImport(tgt string) string {
 
 // GoLangOpts for rendering items as golang code
 func GoLangOpts() *LanguageOpts {
-	var goOtherReservedSuffixes = map[string]bool{
+	goOtherReservedSuffixes := map[string]bool{
 		// see:
 		// https://golang.org/src/go/build/syslist.go
 		// https://golang.org/doc/install/source#environment
@@ -154,6 +154,7 @@ func GoLangOpts() *LanguageOpts {
 		"freebsd":   true,
 		"hurd":      true,
 		"illumos":   true,
+		"ios":       true,
 		"js":        true,
 		"linux":     true,
 		"nacl":      true,
@@ -172,6 +173,7 @@ func GoLangOpts() *LanguageOpts {
 		"armbe":       true,
 		"arm64":       true,
 		"arm64be":     true,
+		"loong64":     true,
 		"mips":        true,
 		"mipsle":      true,
 		"mips64":      true,
@@ -286,15 +288,22 @@ func GoLangOpts() *LanguageOpts {
 
 		gopath := os.Getenv("GOPATH")
 		if gopath == "" {
-			gopath = filepath.Join(os.Getenv("HOME"), "go")
+			homeDir, herr := os.UserHomeDir()
+			if herr != nil {
+				log.Fatalln(herr)
+			}
+			gopath = filepath.Join(homeDir, "go")
 		}
 
 		var pth string
 		for _, gp := range filepath.SplitList(gopath) {
+			if _, derr := os.Stat(filepath.Join(gp, "src")); os.IsNotExist(derr) {
+				continue
+			}
 			// EvalSymLinks also calls the Clean
 			gopathExtended, er := filepath.EvalSymlinks(gp)
 			if er != nil {
-				log.Fatalln(er)
+				panic(er)
 			}
 			gopathExtended = filepath.Join(gopathExtended, "src")
 			gp = filepath.Join(gp, "src")
@@ -395,7 +404,7 @@ func tryResolveModule(baseTargetPath string) (string, string, error) {
 		return "", "", err
 	}
 
-	src, err := ioutil.ReadAll(f)
+	src, err := io.ReadAll(f)
 	if err != nil {
 		return "", "", err
 	}
@@ -429,5 +438,4 @@ func checkPrefixAndFetchRelativePath(childpath string, parentpath string) (bool,
 	}
 
 	return false, ""
-
 }

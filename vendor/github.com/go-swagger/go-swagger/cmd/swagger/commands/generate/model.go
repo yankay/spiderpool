@@ -29,6 +29,7 @@ type modelOptions struct {
 	KeepSpecOrder              bool     `long:"keep-spec-order" description:"keep schema properties order identical to spec file"`
 	AllDefinitions             bool     `long:"all-definitions" description:"generate all model definitions regardless of usage in operations" hidden:"deprecated"`
 	StructTags                 []string `long:"struct-tags" description:"the struct tags to generate, repeat for multiple (defaults to json)"`
+	RootedErrorPath            bool     `long:"rooted-error-path" description:"extends validation errors with the type name instead of an empty path, in the case of arrays and maps"`
 }
 
 func (mo modelOptions) apply(opts *generator.GenOpts) {
@@ -39,6 +40,7 @@ func (mo modelOptions) apply(opts *generator.GenOpts) {
 	opts.PropertiesSpecOrder = mo.KeepSpecOrder
 	opts.IgnoreOperations = mo.AllDefinitions
 	opts.StructTags = mo.StructTags
+	opts.WantsRootedErrorPath = mo.RootedErrorPath
 }
 
 // WithModels adds the model options group.
@@ -57,7 +59,7 @@ type Model struct {
 
 	NoStruct              bool     `long:"skip-struct" description:"when present will not generate the model struct" hidden:"deprecated"`
 	Name                  []string `long:"name" short:"n" description:"the model to generate, repeat for multiple (defaults to all). Same as --models"`
-	AcceptDefinitionsOnly bool     `long:"accept-definitions-only" description:"accepts a partial swagger spec wih only the definitions key"`
+	AcceptDefinitionsOnly bool     `long:"accept-definitions-only" description:"accepts a partial swagger spec with only the definitions key"`
 }
 
 func (m Model) apply(opts *generator.GenOpts) {
@@ -70,15 +72,14 @@ func (m Model) apply(opts *generator.GenOpts) {
 }
 
 func (m Model) log(rp string) {
-	log.Printf(`Generation completed!
+	log.Println(`Generation completed!
 
-For this generation to compile you need to have some packages in your GOPATH:
+For this generation to compile you need to have some packages in your go.mod:
 
 	* github.com/go-openapi/validate
 	* github.com/go-openapi/strfmt
 
-You can get these now with: go get -u -f %s/...
-`, rp)
+You can get these now with: go mod tidy`)
 }
 
 func (m *Model) generate(opts *generator.GenOpts) error {
