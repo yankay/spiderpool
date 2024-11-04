@@ -2,13 +2,11 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
-
-	"errors"
 
 	"github.com/go-openapi/loads"
 	"github.com/go-swagger/go-swagger/cmd/swagger/commands/diff"
@@ -107,7 +105,7 @@ func (c *DiffCommand) readIgnores() (diff.SpecDifferences, error) {
 	defer func() {
 		_ = jsonFile.Close()
 	}()
-	byteValue, err := ioutil.ReadAll(jsonFile)
+	byteValue, err := io.ReadAll(jsonFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ignoreFile, err)
 	}
