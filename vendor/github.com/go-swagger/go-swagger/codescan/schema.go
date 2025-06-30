@@ -2,8 +2,10 @@ package codescan
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/types"
 	"log"
 	"os"
@@ -14,7 +16,6 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 
 	"github.com/go-openapi/spec"
-	"github.com/pkg/errors"
 )
 
 func addExtension(ve *spec.VendorExtensible, key string, value interface{}) {
@@ -91,6 +92,7 @@ func (sv schemaValidations) SetMaximum(val float64, exclusive bool) {
 	sv.current.Maximum = &val
 	sv.current.ExclusiveMaximum = exclusive
 }
+
 func (sv schemaValidations) SetMinimum(val float64, exclusive bool) {
 	sv.current.Minimum = &val
 	sv.current.ExclusiveMinimum = exclusive
@@ -162,7 +164,7 @@ func (s *schemaBuilder) Build(definitions map[string]spec.Schema) error {
 	return nil
 }
 
-func (s *schemaBuilder) buildFromDecl(decl *entityDecl, schema *spec.Schema) error {
+func (s *schemaBuilder) buildFromDecl(_ *entityDecl, schema *spec.Schema) error {
 	// analyze doc comment for the model
 	sp := new(sectionedParser)
 	sp.setTitle = func(lines []string) { schema.Title = joinDropLast(lines) }
@@ -236,7 +238,70 @@ func (s *schemaBuilder) buildFromDecl(decl *entityDecl, schema *spec.Schema) err
 	return nil
 }
 
+func (s *schemaBuilder) buildFromTextMarshal(tpe types.Type, tgt swaggerTypable) error {
+	if typePtr, ok := tpe.(*types.Pointer); ok {
+		return s.buildFromTextMarshal(typePtr.Elem(), tgt)
+	}
+
+	typeNamed, ok := tpe.(*types.Named)
+	if !ok {
+		tgt.Typed("string", "")
+		return nil
+	}
+
+	tio := typeNamed.Obj()
+	if tio.Pkg() == nil && tio.Name() == "error" {
+		return swaggerSchemaForType(tio.Name(), tgt)
+	}
+
+	debugLog("named refined type %s.%s", tio.Pkg().Path(), tio.Name())
+	pkg, found := s.ctx.PkgForType(tpe)
+
+	if strings.ToLower(tio.Name()) == "uuid" {
+		tgt.Typed("string", "uuid")
+		return nil
+	}
+
+	if !found {
+		// this must be a builtin
+		debugLog("skipping because package is nil: %s", tpe.String())
+		return nil
+	}
+	if pkg.Name == "time" && tio.Name() == "Time" {
+		tgt.Typed("string", "date-time")
+		return nil
+	}
+	if pkg.PkgPath == "encoding/json" && tio.Name() == "RawMessage" {
+		tgt.Typed("object", "")
+		return nil
+	}
+	cmt, hasComments := s.ctx.FindComments(pkg, tio.Name())
+	if !hasComments {
+		cmt = new(ast.CommentGroup)
+	}
+
+	if sfnm, isf := strfmtName(cmt); isf {
+		tgt.Typed("string", sfnm)
+		return nil
+	}
+
+	tgt.Typed("string", "")
+	return nil
+}
+
 func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error {
+	pkg, err := importer.Default().Import("encoding")
+	if err != nil {
+		return nil
+	}
+	ifc := pkg.Scope().Lookup("TextMarshaler").Type().Underlying().(*types.Interface)
+
+	// check if the type implements encoding.TextMarshaler interface
+	isTextMarshaler := types.Implements(tpe, ifc)
+	if isTextMarshaler {
+		return s.buildFromTextMarshal(tpe, tgt)
+	}
+
 	switch titpe := tpe.(type) {
 	case *types.Basic:
 		return swaggerSchemaForType(titpe.String(), tgt)
@@ -260,11 +325,9 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 		}
 		eleProp := schemaTypable{sch, tgt.Level()}
 		key := titpe.Key()
-		if key.Underlying().String() == "string" {
-			if err := s.buildFromType(titpe.Elem(), eleProp.AdditionalProperties()); err != nil {
-				return err
-			}
-			return nil
+		isTextMarshaler := types.Implements(key, ifc)
+		if key.Underlying().String() == "string" || isTextMarshaler {
+			return s.buildFromType(titpe.Elem(), eleProp.AdditionalProperties())
 		}
 	case *types.Named:
 		tio := titpe.Obj()
@@ -291,6 +354,19 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 			cmt = new(ast.CommentGroup)
 		}
 
+		if typeName, ok := typeName(cmt); ok {
+			_ = swaggerSchemaForType(typeName, tgt)
+			return nil
+		}
+
+		if s.decl.Spec.Assign.IsValid() {
+			return s.buildFromType(titpe.Underlying(), tgt)
+		}
+
+		if titpe.TypeArgs() != nil && titpe.TypeArgs().Len() > 0 {
+			return s.buildFromType(titpe.Underlying(), tgt)
+		}
+
 		switch utitpe := tpe.Underlying().(type) {
 		case *types.Struct:
 			if decl, ok := s.ctx.FindModel(tio.Pkg().Path(), tio.Name()); ok {
@@ -302,17 +378,16 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 					tgt.Typed("string", sfnm)
 					return nil
 				}
-				if err := s.makeRef(decl, tgt); err != nil {
-					return err
+				if typeName, ok := typeName(cmt); ok {
+					_ = swaggerSchemaForType(typeName, tgt)
+					return nil
 				}
-				return nil
+
+				return s.makeRef(decl, tgt)
 			}
 		case *types.Interface:
 			if decl, ok := s.ctx.FindModel(tio.Pkg().Path(), tio.Name()); ok {
-				if err := s.makeRef(decl, tgt); err != nil {
-					return err
-				}
-				return nil
+				return s.makeRef(decl, tgt)
 			}
 		case *types.Basic:
 			if sfnm, isf := strfmtName(cmt); isf {
@@ -334,13 +409,14 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 			}
 
 			if defaultName, ok := defaultName(cmt); ok {
-				debugLog(defaultName)
+				debugLog(defaultName) //nolint:govet
 				return nil
 			}
 
 			if typeName, ok := typeName(cmt); ok {
 				_ = swaggerSchemaForType(typeName, tgt)
 				return nil
+
 			}
 
 			if isAliasParam(tgt) || aliasParam(cmt) {
@@ -350,10 +426,7 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 				}
 			}
 			if decl, ok := s.ctx.FindModel(tio.Pkg().Path(), tio.Name()); ok {
-				if err := s.makeRef(decl, tgt); err != nil {
-					return err
-				}
-				return nil
+				return s.makeRef(decl, tgt)
 			}
 			return swaggerSchemaForType(utitpe.String(), tgt)
 		case *types.Array:
@@ -362,14 +435,16 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 					tgt.Typed("string", sfnm)
 					return nil
 				}
+				if sfnm == "bsonobjectid" {
+					tgt.Typed("string", sfnm)
+					return nil
+				}
+
 				tgt.Items().Typed("string", sfnm)
 				return nil
 			}
 			if decl, ok := s.ctx.FindModel(tio.Pkg().Path(), tio.Name()); ok {
-				if err := s.makeRef(decl, tgt); err != nil {
-					return err
-				}
-				return nil
+				return s.makeRef(decl, tgt)
 			}
 			return s.buildFromType(utitpe.Elem(), tgt.Items())
 		case *types.Slice:
@@ -382,18 +457,12 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 				return nil
 			}
 			if decl, ok := s.ctx.FindModel(tio.Pkg().Path(), tio.Name()); ok {
-				if err := s.makeRef(decl, tgt); err != nil {
-					return err
-				}
-				return nil
+				return s.makeRef(decl, tgt)
 			}
 			return s.buildFromType(utitpe.Elem(), tgt.Items())
 		case *types.Map:
 			if decl, ok := s.ctx.FindModel(tio.Pkg().Path(), tio.Name()); ok {
-				if err := s.makeRef(decl, tgt); err != nil {
-					return err
-				}
-				return nil
+				return s.makeRef(decl, tgt)
 			}
 			return nil
 
@@ -411,7 +480,6 @@ func (s *schemaBuilder) buildFromType(tpe types.Type, tgt swaggerTypable) error 
 
 func (s *schemaBuilder) buildFromInterface(decl *entityDecl, it *types.Interface, schema *spec.Schema, seen map[string]string) error {
 	if it.Empty() {
-		schema.Typed("object", "")
 		return nil
 	}
 
@@ -423,9 +491,10 @@ func (s *schemaBuilder) buildFromInterface(decl *entityDecl, it *types.Interface
 	var flist []*ast.Field
 	if specType, ok := decl.Spec.Type.(*ast.InterfaceType); ok {
 		flist = make([]*ast.Field, it.NumEmbeddeds()+it.NumExplicitMethods())
-		for i := range specType.Methods.List {
-			flist[i] = specType.Methods.List[i]
-		}
+		copy(flist, specType.Methods.List)
+		// for i := range specType.Methods.List {
+		// 	flist[i] = specType.Methods.List[i]
+		// }
 	}
 
 	// First collect the embedded interfaces
@@ -584,6 +653,12 @@ func (s *schemaBuilder) buildFromInterface(decl *entityDecl, it *types.Interface
 			ps.AddExtension("x-go-name", fld.Name())
 		}
 
+		if s.ctx.app.setXNullableForPointers {
+			if _, isPointer := fld.Type().(*types.Signature).Results().At(0).Type().(*types.Pointer); isPointer && (ps.Extensions == nil || (ps.Extensions["x-nullable"] == nil && ps.Extensions["x-isnullable"] == nil)) {
+				ps.AddExtension("x-nullable", true)
+			}
+		}
+
 		seen[name] = fld.Name()
 		tgt.Properties[name] = ps
 	}
@@ -603,6 +678,15 @@ func (s *schemaBuilder) buildFromInterface(decl *entityDecl, it *types.Interface
 }
 
 func (s *schemaBuilder) buildFromStruct(decl *entityDecl, st *types.Struct, schema *spec.Schema, seen map[string]string) error {
+	s.ctx.FindComments(decl.Pkg, decl.Type.Obj().Name())
+	cmt, hasComments := s.ctx.FindComments(decl.Pkg, decl.Type.Obj().Name())
+	if !hasComments {
+		cmt = new(ast.CommentGroup)
+	}
+	if typeName, ok := typeName(cmt); ok {
+		_ = swaggerSchemaForType(typeName, schemaTypable{schema: schema})
+		return nil
+	}
 	// First check for all of schemas
 	var tgt *spec.Schema
 	hasAllOf := false
@@ -640,7 +724,7 @@ func (s *schemaBuilder) buildFromStruct(decl *entityDecl, st *types.Struct, sche
 			continue
 		}
 
-		_, ignore, _, err := parseJSONTag(afld)
+		_, ignore, _, _, err := parseJSONTag(afld)
 		if err != nil {
 			return err
 		}
@@ -740,7 +824,7 @@ func (s *schemaBuilder) buildFromStruct(decl *entityDecl, st *types.Struct, sche
 			continue
 		}
 
-		name, ignore, isString, err := parseJSONTag(afld)
+		name, ignore, isString, omitEmpty, err := parseJSONTag(afld)
 		if err != nil {
 			return err
 		}
@@ -775,6 +859,13 @@ func (s *schemaBuilder) buildFromStruct(decl *entityDecl, st *types.Struct, sche
 
 		if ps.Ref.String() == "" && name != fld.Name() {
 			addExtension(&ps.VendorExtensible, "x-go-name", fld.Name())
+		}
+
+		if s.ctx.app.setXNullableForPointers {
+			if _, isPointer := fld.Type().(*types.Pointer); isPointer && !omitEmpty &&
+				(ps.Extensions == nil || (ps.Extensions["x-nullable"] == nil && ps.Extensions["x-isnullable"] == nil)) {
+				ps.AddExtension("x-nullable", true)
+			}
 		}
 
 		// we have 2 cases:
@@ -818,14 +909,11 @@ func (s *schemaBuilder) buildAllOf(tpe types.Type, schema *spec.Schema) error {
 					return nil
 				}
 				if decl.HasModelAnnotation() {
-					if err := s.makeRef(decl, schemaTypable{schema, 0}); err != nil {
-						return err
-					}
-					return nil
+					return s.makeRef(decl, schemaTypable{schema, 0})
 				}
 				return s.buildFromStruct(decl, utpe, schema, make(map[string]string))
 			}
-			return errors.Errorf("can't find source file for struct: %s", ftpe.String())
+			return fmt.Errorf("can't find source file for struct: %s", ftpe.String())
 		case *types.Interface:
 			decl, found := s.ctx.FindModel(ftpe.Obj().Pkg().Path(), ftpe.Obj().Name())
 			if found {
@@ -834,14 +922,11 @@ func (s *schemaBuilder) buildAllOf(tpe types.Type, schema *spec.Schema) error {
 					return nil
 				}
 				if decl.HasModelAnnotation() {
-					if err := s.makeRef(decl, schemaTypable{schema, 0}); err != nil {
-						return err
-					}
-					return nil
+					return s.makeRef(decl, schemaTypable{schema, 0})
 				}
 				return s.buildFromInterface(decl, utpe, schema, make(map[string]string))
 			}
-			return errors.Errorf("can't find source file for interface: %s", ftpe.String())
+			return fmt.Errorf("can't find source file for interface: %s", ftpe.String())
 		default:
 			log.Printf("WARNING: can't figure out object type for allOf named type (%T): %v", ftpe, ftpe.Underlying())
 			return fmt.Errorf("unable to locate source file for allOf %s", utpe.String())
@@ -865,13 +950,13 @@ func (s *schemaBuilder) buildEmbedded(tpe types.Type, schema *spec.Schema, seen 
 			if found {
 				return s.buildFromStruct(decl, utpe, schema, seen)
 			}
-			return errors.Errorf("can't find source file for struct: %s", ftpe.String())
+			return fmt.Errorf("can't find source file for struct: %s", ftpe.String())
 		case *types.Interface:
 			decl, found := s.ctx.FindModel(ftpe.Obj().Pkg().Path(), ftpe.Obj().Name())
 			if found {
 				return s.buildFromInterface(decl, utpe, schema, seen)
 			}
-			return errors.Errorf("can't find source file for struct: %s", ftpe.String())
+			return fmt.Errorf("can't find source file for struct: %s", ftpe.String())
 		default:
 			log.Printf("WARNING: can't figure out object type for embedded named type (%T): %v", ftpe, ftpe.Underlying())
 		}
@@ -1036,17 +1121,17 @@ func (t tagOptions) Name() string {
 	return t[0]
 }
 
-func parseJSONTag(field *ast.Field) (name string, ignore bool, isString bool, err error) {
+func parseJSONTag(field *ast.Field) (name string, ignore, isString, omitEmpty bool, err error) {
 	if len(field.Names) > 0 {
 		name = field.Names[0].Name
 	}
 	if field.Tag == nil || len(strings.TrimSpace(field.Tag.Value)) == 0 {
-		return name, false, false, nil
+		return name, false, false, false, nil
 	}
 
 	tv, err := strconv.Unquote(field.Tag.Value)
 	if err != nil {
-		return name, false, false, err
+		return name, false, false, false, err
 	}
 
 	if strings.TrimSpace(tv) != "" {
@@ -1059,16 +1144,18 @@ func parseJSONTag(field *ast.Field) (name string, ignore bool, isString bool, er
 			isString = isFieldStringable(field.Type)
 		}
 
+		omitEmpty = jsonParts.Contain("omitempty")
+
 		switch jsonParts.Name() {
 		case "-":
-			return name, true, isString, nil
+			return name, true, isString, omitEmpty, nil
 		case "":
-			return name, false, isString, nil
+			return name, false, isString, omitEmpty, nil
 		default:
-			return jsonParts.Name(), false, isString, nil
+			return jsonParts.Name(), false, isString, omitEmpty, nil
 		}
 	}
-	return name, false, false, nil
+	return name, false, false, false, nil
 }
 
 // isFieldStringable check if the field type is a scalar. If the field type is
