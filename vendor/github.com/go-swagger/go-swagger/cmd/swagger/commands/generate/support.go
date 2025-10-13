@@ -48,22 +48,19 @@ func (s *Support) generate(opts *generator.GenOpts) error {
 	return generator.GenerateSupport(s.Name, s.Models.Models, s.Operations.Operations, opts)
 }
 
-func (s Support) log(rp string) {
+func (s Support) log(_ string) {
+	log.Println(`Generation completed!
 
-	log.Printf(`Generation completed!
-
-For this generation to compile you need to have some packages in your vendor or GOPATH:
+For this generation to compile you need to have some packages in go.mod:
 
   * github.com/go-openapi/runtime
-  * github.com/asaskevich/govalidator
+  * github.com/go-openapi/strfmt
   * github.com/jessevdk/go-flags
-  * golang.org/x/net/context/ctxhttp
 
-You can get these now with: go get -u -f %s/...
-`, rp)
+You can get these now with: go mod tidy`)
 }
 
 // Execute generates the supporting files file
-func (s *Support) Execute(args []string) error {
+func (s *Support) Execute(_ []string) error {
 	return createSwagger(s)
 }

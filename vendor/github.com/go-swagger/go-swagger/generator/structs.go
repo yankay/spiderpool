@@ -20,6 +20,7 @@ import (
 type GenCommon struct {
 	Copyright        string
 	TargetImportPath string
+	RootedErrorPath  bool // wants array and map types to have a path corresponding to their type in reported errors
 }
 
 // GenDefinition contains all the properties to generate a
@@ -28,6 +29,7 @@ type GenDefinition struct {
 	GenCommon
 	GenSchema
 	Package        string
+	CliPackage     string
 	Imports        map[string]string
 	DefaultImports map[string]string
 	ExtraSchemas   GenSchemaList
@@ -85,17 +87,20 @@ type GenSchema struct {
 	HasBaseType                bool
 	IsSubType                  bool
 	IsExported                 bool
+	IsElem                     bool // IsElem gives some context when the schema is part of an array or a map
+	IsProperty                 bool // IsProperty gives some context when the schema is a property of an object
 	DiscriminatorField         string
 	DiscriminatorValue         string
 	Discriminates              map[string]string
 	Parents                    []string
 	IncludeValidator           bool
 	IncludeModel               bool
-	Default                    interface{}
+	Default                    any
 	WantsMarshalBinary         bool // do we generate MarshalBinary interface?
 	StructTags                 []string
 	ExtraImports               map[string]string // non-standard imports detected when using external types
 	ExternalDocs               *spec.ExternalDocumentation
+	WantsRootedErrorPath       bool
 }
 
 func (g GenSchema) renderMarshalTag() string {
@@ -143,12 +148,13 @@ func (g GenSchema) PrintTags() string {
 			continue
 		}
 
-		if tag == "example" && len(g.Example) > 0 {
+		switch {
+		case tag == "example" && len(g.Example) > 0:
 			// only add example tag if it's contained in the struct tags
 			tags["example"] = g.Example // json representation of the example object
-		} else if tag == "description" && len(g.Description) > 0 {
+		case tag == "description" && len(g.Description) > 0:
 			tags["description"] = g.Description
-		} else {
+		default:
 			tags[tag] = tags["json"]
 		}
 
@@ -231,7 +237,7 @@ type sharedValidations struct {
 	HasContextValidations bool
 	Required              bool
 	HasSliceValidations   bool
-	ItemsEnum             []interface{}
+	ItemsEnum             []any
 
 	// NOTE: "patternProperties" and "dependencies" not supported by Swagger 2.0
 }
@@ -256,11 +262,12 @@ type GenResponse struct {
 	Imports        map[string]string
 	DefaultImports map[string]string
 
-	Extensions map[string]interface{}
+	Extensions map[string]any
 
 	StrictResponders bool
 	OperationName    string
 	Examples         GenResponseExamples
+	ReturnErrors     bool
 }
 
 // GenResponseExamples is a sortable collection []GenResponseExample
@@ -273,7 +280,7 @@ func (g GenResponseExamples) Less(i, j int) bool { return g[i].MediaType < g[j].
 // GenResponseExample captures an example provided for a response for some mime type
 type GenResponseExample struct {
 	MediaType string
-	Example   interface{}
+	Example   any
 }
 
 // GenHeader represents a header on a response for code generation
@@ -292,7 +299,7 @@ type GenHeader struct {
 
 	Title       string
 	Description string
-	Default     interface{}
+	Default     any
 	HasDefault  bool
 
 	CollectionFormat string
@@ -360,13 +367,15 @@ type GenParameter struct {
 
 	CollectionFormat string
 
+	CustomTag string
+
 	Child  *GenItems
 	Parent *GenItems
 
 	// Unused
 	// BodyParam *GenParameter
 
-	Default         interface{}
+	Default         any
 	HasDefault      bool
 	ZeroValue       string
 	AllowEmptyValue bool
@@ -386,7 +395,7 @@ type GenParameter struct {
 	HasSimpleBodyMap    bool
 	HasModelBodyMap     bool
 
-	Extensions map[string]interface{}
+	Extensions map[string]any
 }
 
 // IsQueryParam returns true when this parameter is a query param
@@ -513,6 +522,8 @@ type GenOperationGroup struct {
 	RootPackage    string
 	GenOpts        *GenOpts
 	PackageAlias   string
+
+	ClientOptions *GenClientOptions
 }
 
 // GenOperationGroups is a sorted collection of operation groups
@@ -627,9 +638,10 @@ type GenOperation struct {
 	ConsumesMediaTypes   []string
 	TimeoutName          string
 
-	Extensions map[string]interface{}
+	Extensions map[string]any
 
 	StrictResponders bool
+	ReturnErrors     bool
 	ExternalDocs     *spec.ExternalDocumentation
 	Produces         []string // original produces for operation (for doc)
 	Consumes         []string // original consumes for operation (for doc)
@@ -721,6 +733,16 @@ func (g GenSerGroups) Len() int           { return len(g) }
 func (g GenSerGroups) Swap(i, j int)      { g[i], g[j] = g[j], g[i] }
 func (g GenSerGroups) Less(i, j int) bool { return g[i].Name < g[j].Name }
 
+// NumSerializers yields the total number of serializer entries in this group.
+func (g GenSerGroups) NumSerializers() int {
+	n := 0
+	for _, group := range g {
+		n += len(group.AllSerializers)
+	}
+
+	return n
+}
+
 // GenSerGroup represents a group of serializers: this links a serializer to a list of
 // prioritized media types (mime).
 type GenSerGroup struct {
@@ -768,7 +790,7 @@ type GenSecurityScheme struct {
 	Flow             string
 	AuthorizationURL string
 	TokenURL         string
-	Extensions       map[string]interface{}
+	Extensions       map[string]any
 	ScopesDesc       []GenSecurityScope
 }
 
@@ -800,3 +822,10 @@ type GenSecurityRequirements []GenSecurityRequirement
 func (g GenSecurityRequirements) Len() int           { return len(g) }
 func (g GenSecurityRequirements) Swap(i, j int)      { g[i], g[j] = g[j], g[i] }
 func (g GenSecurityRequirements) Less(i, j int) bool { return g[i].Name < g[j].Name }
+
+// GenClientOptions holds extra pieces of information
+// to generate a client.
+type GenClientOptions struct {
+	ProducesMediaTypes []string // filled with all producers if any method as more than 1
+	ConsumesMediaTypes []string // filled with all consumers if any method as more than 1
+}

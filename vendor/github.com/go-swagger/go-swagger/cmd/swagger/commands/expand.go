@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
+	"log"
+	"os"
+
+	flags "github.com/jessevdk/go-flags"
 
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
-	flags "github.com/jessevdk/go-flags"
-	yaml "gopkg.in/yaml.v2"
 )
 
 // ExpandSpec is a command that expands the $refs in a swagger document.
@@ -42,11 +44,14 @@ func (c *ExpandSpec) Execute(args []string) error {
 	return writeToFile(exp.Spec(), !c.Compact, c.Format, string(c.Output))
 }
 
+var defaultWriter io.Writer = os.Stdout
+
 func writeToFile(swspec *spec.Swagger, pretty bool, format string, output string) error {
 	var b []byte
 	var err error
 	asJSON := format == "json"
 
+	log.Println("format = ", format)
 	switch {
 	case pretty && asJSON:
 		b, err = json.MarshalIndent(swspec, "", "  ")
@@ -56,11 +61,15 @@ func writeToFile(swspec *spec.Swagger, pretty bool, format string, output string
 		// marshals as YAML
 		b, err = json.Marshal(swspec)
 		if err == nil {
-			d, ery := swag.BytesToYAMLDoc(b)
-			if ery != nil {
-				return ery
+			var data swag.JSONMapSlice
+			if erg := json.Unmarshal(b, &data); erg != nil {
+				log.Fatalln(erg)
 			}
-			b, err = yaml.Marshal(d)
+			var bb any
+			bb, err = data.MarshalYAML()
+			if err == nil {
+				b = bb.([]byte)
+			}
 		}
 	}
 
@@ -68,10 +77,11 @@ func writeToFile(swspec *spec.Swagger, pretty bool, format string, output string
 		return err
 	}
 
-	if output == "" {
-		fmt.Println(string(b))
-		return nil
+	switch output {
+	case "", "-":
+		_, e := fmt.Fprintf(defaultWriter, "%s\n", b)
+		return e
+	default:
+		return os.WriteFile(output, b, 0o644) //#nosec
 	}
-
-	return ioutil.WriteFile(output, b, 0644) // #nosec
 }

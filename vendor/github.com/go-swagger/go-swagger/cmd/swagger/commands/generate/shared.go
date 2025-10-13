@@ -2,23 +2,24 @@ package generate
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/go-openapi/analysis"
-	"github.com/go-openapi/swag"
-	"github.com/go-swagger/go-swagger/generator"
 	flags "github.com/jessevdk/go-flags"
 	"github.com/spf13/viper"
+
+	"github.com/go-openapi/analysis"
+	"github.com/go-openapi/swag"
+
+	"github.com/go-swagger/go-swagger/generator"
 )
 
 // FlattenCmdOptions determines options to the flatten spec preprocessing
 type FlattenCmdOptions struct {
 	WithExpand  bool     `long:"with-expand" description:"expands all $ref's in spec prior to generation (shorthand to --with-flatten=expand)"  group:"shared"`
-	WithFlatten []string `long:"with-flatten" description:"flattens all $ref's in spec prior to generation" choice:"minimal" choice:"full" choice:"expand" choice:"verbose" choice:"noverbose" choice:"remove-unused" default:"minimal" default:"verbose" group:"shared"` // nolint: staticcheck
+	WithFlatten []string `long:"with-flatten" description:"flattens all $ref's in spec prior to generation" choice:"minimal" choice:"full" choice:"expand" choice:"verbose" choice:"noverbose" choice:"remove-unused" choice:"keep-names" default:"minimal" default:"verbose" group:"shared"`
 }
 
 // SetFlattenOptions builds flatten options from command line args
@@ -65,6 +66,8 @@ func (f *FlattenCmdOptions) SetFlattenOptions(dflt *analysis.FlattenOpts) (res *
 				res.Minimal = true
 				minimalIsSet = true
 			}
+		case "keep-names":
+			res.KeepNames = true
 		}
 	}
 	return
@@ -112,7 +115,7 @@ func (w WithShared) getConfigFile() string {
 	return string(w.Shared.ConfigFile)
 }
 
-type sharedOptions struct {
+type sharedOptionsCommon struct {
 	Spec                  flags.Filename `long:"spec" short:"f" description:"the spec file to use (default swagger.{json,yml,yaml})" group:"shared"`
 	Target                flags.Filename `long:"target" short:"t" default:"./" description:"the base directory for generating the files" group:"shared"`
 	Template              string         `long:"template" description:"load contributed templates" choice:"stratoscale" group:"shared"`
@@ -124,10 +127,11 @@ type sharedOptions struct {
 	SkipValidation        bool           `long:"skip-validation" description:"skips validation of spec prior to generation" group:"shared"`
 	DumpData              bool           `long:"dump-data" description:"when present dumps the json for the template generator instead of generating files" group:"shared"`
 	StrictResponders      bool           `long:"strict-responders" description:"Use strict type for the handler return value"`
+	ReturnErrors          bool           `long:"return-errors" short:"e" description:"handlers explicitly return an error as the second value" group:"shared"`
 	FlattenCmdOptions
 }
 
-func (s sharedOptions) apply(opts *generator.GenOpts) {
+func (s sharedOptionsCommon) apply(opts *generator.GenOpts) {
 	opts.Spec = string(s.Spec)
 	opts.Target = string(s.Target)
 	opts.Template = s.Template
@@ -135,9 +139,10 @@ func (s sharedOptions) apply(opts *generator.GenOpts) {
 	opts.AllowTemplateOverride = s.AllowTemplateOverride
 	opts.ValidateSpec = !s.SkipValidation
 	opts.DumpData = s.DumpData
-	opts.FlattenOpts = s.FlattenCmdOptions.SetFlattenOptions(opts.FlattenOpts)
+	opts.FlattenOpts = s.SetFlattenOptions(opts.FlattenOpts)
 	opts.Copyright = string(s.CopyrightFile)
 	opts.StrictResponders = s.StrictResponders
+	opts.ReturnErrors = s.ReturnErrors
 
 	swag.AddInitialisms(s.AdditionalInitialisms...)
 }
@@ -147,7 +152,7 @@ func setCopyright(copyrightFile string) (string, error) {
 	if copyrightFile == "" {
 		return "", nil
 	}
-	bytebuffer, err := ioutil.ReadFile(copyrightFile)
+	bytebuffer, err := os.ReadFile(copyrightFile)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +171,7 @@ func createSwagger(s sharedCommand) error {
 
 	opts.Copyright, err = setCopyright(opts.Copyright)
 	if err != nil {
-		return fmt.Errorf("could not load copyright file: %v", err)
+		return fmt.Errorf("could not load copyright file: %w", err)
 	}
 
 	if opts.Template != "" {
