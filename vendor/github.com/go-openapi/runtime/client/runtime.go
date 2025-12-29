@@ -1,16 +1,5 @@
-// Copyright 2015 go-swagger maintainers
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
 
 package client
 
@@ -22,23 +11,30 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"mime"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/go-openapi/strfmt"
-	"github.com/opentracing/opentracing-go"
 
 	"github.com/go-openapi/runtime"
 	"github.com/go-openapi/runtime/logger"
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/runtime/yamlpc"
+	"github.com/go-openapi/strfmt"
 )
+
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
+// DefaultTimeout the default request timeout
+var DefaultTimeout = 30 * time.Second
 
 // TLSClientOptions to configure client authentication with mutual TLS
 type TLSClientOptions struct {
@@ -70,7 +66,7 @@ type TLSClientOptions struct {
 	LoadedCA *x509.Certificate
 
 	// LoadedCAPool specifies a pool of RootCAs to use when validating the server's TLS certificate.
-	// If set, it will be combined with the the other loaded certificates (see LoadedCA and CA).
+	// If set, it will be combined with the other loaded certificates (see LoadedCA and CA).
 	// If neither LoadedCA or CA is set, the provided pool with override the system
 	// certificate pool.
 	// The caller must not use the supplied pool after calling TLSClientAuth.
@@ -112,7 +108,9 @@ type TLSClientOptions struct {
 // TLSClientAuth creates a tls.Config for mutual auth
 func TLSClientAuth(opts TLSClientOptions) (*tls.Config, error) {
 	// create client tls config
-	cfg := &tls.Config{}
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
 
 	// load client cert if specified
 	if opts.Certificate != "" {
@@ -136,7 +134,7 @@ func TLSClientAuth(opts TLSClientOptions) (*tls.Config, error) {
 				return nil, fmt.Errorf("tls client priv key: %v", err)
 			}
 		default:
-			return nil, fmt.Errorf("tls client priv key: unsupported key type")
+			return nil, errors.New("tls client priv key: unsupported key type")
 		}
 
 		block = pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes}
@@ -158,20 +156,21 @@ func TLSClientAuth(opts TLSClientOptions) (*tls.Config, error) {
 	// When no CA certificate is provided, default to the system cert pool
 	// that way when a request is made to a server known by the system trust store,
 	// the name is still verified
-	if opts.LoadedCA != nil {
+	switch {
+	case opts.LoadedCA != nil:
 		caCertPool := basePool(opts.LoadedCAPool)
 		caCertPool.AddCert(opts.LoadedCA)
 		cfg.RootCAs = caCertPool
-	} else if opts.CA != "" {
+	case opts.CA != "":
 		// load ca cert
-		caCert, err := ioutil.ReadFile(opts.CA)
+		caCert, err := os.ReadFile(opts.CA)
 		if err != nil {
 			return nil, fmt.Errorf("tls client ca: %v", err)
 		}
 		caCertPool := basePool(opts.LoadedCAPool)
 		caCertPool.AppendCertsFromPEM(caCert)
 		cfg.RootCAs = caCertPool
-	} else if opts.LoadedCAPool != nil {
+	case opts.LoadedCAPool != nil:
 		cfg.RootCAs = opts.LoadedCAPool
 	}
 
@@ -181,16 +180,7 @@ func TLSClientAuth(opts TLSClientOptions) (*tls.Config, error) {
 		cfg.ServerName = opts.ServerName
 	}
 
-	cfg.BuildNameToCertificate()
-
 	return cfg, nil
-}
-
-func basePool(pool *x509.CertPool) *x509.CertPool {
-	if pool == nil {
-		return x509.NewCertPool()
-	}
-	return pool
 }
 
 // TLSTransport creates a http client transport suitable for mutual tls auth
@@ -212,9 +202,6 @@ func TLSClient(opts TLSClientOptions) (*http.Client, error) {
 	return &http.Client{Transport: transport}, nil
 }
 
-// DefaultTimeout the default request timeout
-var DefaultTimeout = 30 * time.Second
-
 // Runtime represents an API client that uses the transport
 // to make http requests based on a swagger specification.
 type Runtime struct {
@@ -225,11 +212,11 @@ type Runtime struct {
 
 	Transport http.RoundTripper
 	Jar       http.CookieJar
-	//Spec      *spec.Document
+	// Spec      *spec.Document
 	Host     string
 	BasePath string
 	Formats  strfmt.Registry
-	Context  context.Context
+	Context  context.Context //nolint:containedctx  // we precisely want this type to contain the request context
 
 	Debug  bool
 	logger logger.Logger
@@ -237,6 +224,7 @@ type Runtime struct {
 	clientOnce *sync.Once
 	client     *http.Client
 	schemes    []string
+	response   ClientResponseFunc
 }
 
 // New creates a new default runtime for a swagger api runtime.Client
@@ -275,6 +263,7 @@ func New(host, basePath string, schemes []string) *Runtime {
 
 	rt.Debug = logger.DebugEnabled()
 	rt.logger = logger.StandardLogger{}
+	rt.response = newResponse
 
 	if len(schemes) > 0 {
 		rt.schemes = schemes
@@ -297,43 +286,41 @@ func NewWithClient(host, basePath string, schemes []string, client *http.Client)
 // A new client span is created for each request.
 // If the context of the client operation does not contain an active span, no span is created.
 // The provided opts are applied to each spans - for example to add global tags.
-func (r *Runtime) WithOpenTracing(opts ...opentracing.StartSpanOption) runtime.ClientTransport {
-	return newOpenTracingTransport(r, r.Host, opts)
-}
-
-func (r *Runtime) pickScheme(schemes []string) string {
-	if v := r.selectScheme(r.schemes); v != "" {
-		return v
-	}
-	if v := r.selectScheme(schemes); v != "" {
-		return v
-	}
-	return "http"
-}
-
-func (r *Runtime) selectScheme(schemes []string) string {
-	schLen := len(schemes)
-	if schLen == 0 {
-		return ""
-	}
-
-	scheme := schemes[0]
-	// prefer https, but skip when not possible
-	if scheme != "https" && schLen > 1 {
-		for _, sch := range schemes {
-			if sch == "https" {
-				scheme = sch
-				break
-			}
+//
+// Deprecated: use [WithOpenTelemetry] instead, as opentracing is now archived and superseded by opentelemetry.
+//
+// # Deprecation notice
+//
+// The [Runtime.WithOpenTracing] method has been deprecated in favor of [Runtime.WithOpenTelemetry].
+//
+// The method is still around so programs calling it will still build. However, it will return
+// an opentelemetry transport.
+//
+// If you have a strict requirement on using opentracing, you may still do so by importing
+// module [github.com/go-openapi/runtime/client-middleware/opentracing] and using
+// [github.com/go-openapi/runtime/client-middleware/opentracing.WithOpenTracing] with your
+// usual opentracing options and opentracing-enabled transport.
+//
+// Passed options are ignored unless they are of type [OpenTelemetryOpt].
+func (r *Runtime) WithOpenTracing(opts ...any) runtime.ClientTransport {
+	otelOpts := make([]OpenTelemetryOpt, 0, len(opts))
+	for _, o := range opts {
+		otelOpt, ok := o.(OpenTelemetryOpt)
+		if !ok {
+			continue
 		}
+		otelOpts = append(otelOpts, otelOpt)
 	}
-	return scheme
+
+	return r.WithOpenTelemetry(otelOpts...)
 }
-func transportOrDefault(left, right http.RoundTripper) http.RoundTripper {
-	if left == nil {
-		return right
-	}
-	return left
+
+// WithOpenTelemetry adds opentelemetry support to the provided runtime.
+// A new client span is created for each request.
+// If the context of the client operation does not contain an active span, no span is created.
+// The provided opts are applied to each spans - for example to add global tags.
+func (r *Runtime) WithOpenTelemetry(opts ...OpenTelemetryOpt) runtime.ClientTransport {
+	return newOpenTelemetryTransport(r, r.Host, opts)
 }
 
 // EnableConnectionReuse drains the remaining body from a response
@@ -358,18 +345,176 @@ func (r *Runtime) EnableConnectionReuse() {
 	)
 }
 
+func (r *Runtime) CreateHttpRequest(operation *runtime.ClientOperation) (req *http.Request, err error) { //nolint:revive
+	_, req, err = r.createHttpRequest(operation)
+	return
+}
+
+// Submit a request and when there is a body on success it will turn that into the result
+// all other things are turned into an api error for swagger which retains the status code
+func (r *Runtime) Submit(operation *runtime.ClientOperation) (any, error) {
+	_, readResponse, _ := operation.Params, operation.Reader, operation.AuthInfo
+
+	request, req, err := r.createHttpRequest(operation)
+	if err != nil {
+		return nil, err
+	}
+
+	r.clientOnce.Do(func() {
+		r.client = &http.Client{
+			Transport: r.Transport,
+			Jar:       r.Jar,
+		}
+	})
+
+	if r.Debug {
+		b, err2 := httputil.DumpRequestOut(req, true)
+		if err2 != nil {
+			return nil, err2
+		}
+		r.logger.Debugf("%s\n", string(b))
+	}
+
+	var parentCtx context.Context
+	switch {
+	case operation.Context != nil:
+		parentCtx = operation.Context
+	case r.Context != nil:
+		parentCtx = r.Context
+	default:
+		parentCtx = context.Background()
+	}
+
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+	if request.timeout == 0 {
+		// There may be a deadline in the context passed to the operation.
+		// Otherwise, there is no timeout set.
+		ctx, cancel = context.WithCancel(parentCtx)
+	} else {
+		// Sets the timeout passed from request params (by default runtime.DefaultTimeout).
+		// If there is already a deadline in the parent context, the shortest will
+		// apply.
+		ctx, cancel = context.WithTimeout(parentCtx, request.timeout)
+	}
+	defer cancel()
+
+	var client *http.Client
+	if operation.Client != nil {
+		client = operation.Client
+	} else {
+		client = r.client
+	}
+	req = req.WithContext(ctx)
+	res, err := client.Do(req) // make requests, by default follows 10 redirects before failing
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	ct := res.Header.Get(runtime.HeaderContentType)
+	if ct == "" { // this should really never occur
+		ct = r.DefaultMediaType
+	}
+
+	if r.Debug {
+		printBody := true
+		if ct == runtime.DefaultMime {
+			printBody = false // Spare the terminal from a binary blob.
+		}
+		b, err2 := httputil.DumpResponse(res, printBody)
+		if err2 != nil {
+			return nil, err2
+		}
+		r.logger.Debugf("%s\n", string(b))
+	}
+
+	mt, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return nil, fmt.Errorf("parse content type: %s", err)
+	}
+
+	cons, ok := r.Consumers[mt]
+	if !ok {
+		if cons, ok = r.Consumers["*/*"]; !ok {
+			// scream about not knowing what to do
+			return nil, fmt.Errorf("no consumer: %q", ct)
+		}
+	}
+	return readResponse.ReadResponse(r.response(res), cons)
+}
+
+// SetDebug changes the debug flag.
+// It ensures that client and middlewares have the set debug level.
+func (r *Runtime) SetDebug(debug bool) {
+	r.Debug = debug
+	middleware.Debug = debug
+}
+
+// SetLogger changes the logger stream.
+// It ensures that client and middlewares use the same logger.
+func (r *Runtime) SetLogger(logger logger.Logger) {
+	r.logger = logger
+	middleware.Logger = logger
+}
+
+type ClientResponseFunc = func(*http.Response) runtime.ClientResponse //nolint:revive
+
+// SetResponseReader changes the response reader implementation.
+func (r *Runtime) SetResponseReader(f ClientResponseFunc) {
+	if f == nil {
+		return
+	}
+	r.response = f
+}
+
+func (r *Runtime) pickScheme(schemes []string) string {
+	if v := r.selectScheme(r.schemes); v != "" {
+		return v
+	}
+	if v := r.selectScheme(schemes); v != "" {
+		return v
+	}
+	return schemeHTTP
+}
+
+func (r *Runtime) selectScheme(schemes []string) string {
+	schLen := len(schemes)
+	if schLen == 0 {
+		return ""
+	}
+
+	scheme := schemes[0]
+	// prefer https, but skip when not possible
+	if scheme != schemeHTTPS && schLen > 1 {
+		for _, sch := range schemes {
+			if sch == schemeHTTPS {
+				scheme = sch
+				break
+			}
+		}
+	}
+	return scheme
+}
+
+func transportOrDefault(left, right http.RoundTripper) http.RoundTripper {
+	if left == nil {
+		return right
+	}
+	return left
+}
+
 // takes a client operation and creates equivalent http.Request
-func (r *Runtime) createHttpRequest(operation *runtime.ClientOperation) (*request, *http.Request, error) {
+func (r *Runtime) createHttpRequest(operation *runtime.ClientOperation) (*request, *http.Request, error) { //nolint:revive
 	params, _, auth := operation.Params, operation.Reader, operation.AuthInfo
 
-	request, err := newRequest(operation.Method, operation.PathPattern, params)
-	if err != nil {
-		return nil, nil, err
-	}
+	request := newRequest(operation.Method, operation.PathPattern, params)
 
 	var accept []string
 	accept = append(accept, operation.ProducesMediaTypes...)
-	if err = request.SetHeaderParam(runtime.HeaderAccept, accept...); err != nil {
+	if err := request.SetHeaderParam(runtime.HeaderAccept, accept...); err != nil {
 		return nil, nil, err
 	}
 
@@ -381,7 +526,7 @@ func (r *Runtime) createHttpRequest(operation *runtime.ClientOperation) (*reques
 			return r.DefaultAuthentication.AuthenticateRequest(req, reg)
 		})
 	}
-	//if auth != nil {
+	// if auth != nil {
 	//	if err := auth.AuthenticateRequest(request, r.Formats); err != nil {
 	//		return nil, err
 	//	}
@@ -411,108 +556,9 @@ func (r *Runtime) createHttpRequest(operation *runtime.ClientOperation) (*reques
 	return request, req, nil
 }
 
-func (r *Runtime) CreateHttpRequest(operation *runtime.ClientOperation) (req *http.Request, err error) {
-	_, req, err = r.createHttpRequest(operation)
-	return
-}
-
-// Submit a request and when there is a body on success it will turn that into the result
-// all other things are turned into an api error for swagger which retains the status code
-func (r *Runtime) Submit(operation *runtime.ClientOperation) (interface{}, error) {
-	_, readResponse, _ := operation.Params, operation.Reader, operation.AuthInfo
-
-	request, req, err := r.createHttpRequest(operation)
-	if err != nil {
-		return nil, err
+func basePool(pool *x509.CertPool) *x509.CertPool {
+	if pool == nil {
+		return x509.NewCertPool()
 	}
-
-	r.clientOnce.Do(func() {
-		r.client = &http.Client{
-			Transport: r.Transport,
-			Jar:       r.Jar,
-		}
-	})
-
-	if r.Debug {
-		b, err2 := httputil.DumpRequestOut(req, true)
-		if err2 != nil {
-			return nil, err2
-		}
-		r.logger.Debugf("%s\n", string(b))
-	}
-
-	var hasTimeout bool
-	pctx := operation.Context
-	if pctx == nil {
-		pctx = r.Context
-	} else {
-		hasTimeout = true
-	}
-	if pctx == nil {
-		pctx = context.Background()
-	}
-	var ctx context.Context
-	var cancel context.CancelFunc
-	if hasTimeout {
-		ctx, cancel = context.WithCancel(pctx)
-	} else {
-		ctx, cancel = context.WithTimeout(pctx, request.timeout)
-	}
-	defer cancel()
-
-	client := operation.Client
-	if client == nil {
-		client = r.client
-	}
-	req = req.WithContext(ctx)
-	res, err := client.Do(req) // make requests, by default follows 10 redirects before failing
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	ct := res.Header.Get(runtime.HeaderContentType)
-	if ct == "" { // this should really really never occur
-		ct = r.DefaultMediaType
-	}
-
-	if r.Debug {
-		printBody := true
-		if ct == runtime.DefaultMime {
-			printBody = false // Spare the terminal from a binary blob.
-		}
-		b, err2 := httputil.DumpResponse(res, printBody)
-		if err2 != nil {
-			return nil, err2
-		}
-		r.logger.Debugf("%s\n", string(b))
-	}
-
-	mt, _, err := mime.ParseMediaType(ct)
-	if err != nil {
-		return nil, fmt.Errorf("parse content type: %s", err)
-	}
-
-	cons, ok := r.Consumers[mt]
-	if !ok {
-		if cons, ok = r.Consumers["*/*"]; !ok {
-			// scream about not knowing what to do
-			return nil, fmt.Errorf("no consumer: %q", ct)
-		}
-	}
-	return readResponse.ReadResponse(response{res}, cons)
-}
-
-// SetDebug changes the debug flag.
-// It ensures that client and middlewares have the set debug level.
-func (r *Runtime) SetDebug(debug bool) {
-	r.Debug = debug
-	middleware.Debug = debug
-}
-
-// SetLogger changes the logger stream.
-// It ensures that client and middlewares use the same logger.
-func (r *Runtime) SetLogger(logger logger.Logger) {
-	r.logger = logger
-	middleware.Logger = logger
+	return pool
 }
