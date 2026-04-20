@@ -1,37 +1,39 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 
-	"errors"
-
 	"github.com/go-openapi/loads"
+
 	"github.com/go-swagger/go-swagger/cmd/swagger/commands/diff"
 )
 
-// JSONFormat for json
+// JSONFormat for json.
 const JSONFormat = "json"
 
 // DiffCommand is a command that generates the diff of two swagger specs.
 //
 // There are no specific options for this expansion.
 type DiffCommand struct {
-	OnlyBreakingChanges bool   `long:"break" short:"b" description:"When present, only shows incompatible changes"`
-	Format              string `long:"format" short:"f" description:"When present, writes output as json" default:"txt" choice:"txt" choice:"json"`
-	IgnoreFile          string `long:"ignore" short:"i" description:"Exception file of diffs to ignore (copy output from json diff format)"  default:"none specified"`
-	Destination         string `long:"dest" short:"d" description:"Output destination file or stdout" default:"stdout"`
+	OnlyBreakingChanges bool   `description:"When present, only shows incompatible changes" long:"break"                                                                        short:"b"`
+	Format              string `choice:"txt"                                                choice:"json"                                                                       default:"txt" description:"When present, writes output as json" long:"format" short:"f"`
+	IgnoreFile          string `default:"none specified"                                    description:"Exception file of diffs to ignore (copy output from json diff format)" long:"ignore" short:"i"`
+	Destination         string `default:"stdout"                                            description:"Output destination file or stdout"                                     long:"dest"   short:"d"`
 	Args                struct {
 		OldSpec string `positional-arg-name:"{old spec}"`
 		NewSpec string `positional-arg-name:"{new spec}"`
 	} `required:"2" positional-args:"specs" description:"Input specs to be diff-ed"`
 }
 
-// Execute diffs the two specs provided
+// Execute diffs the two specs provided.
 func (c *DiffCommand) Execute(_ []string) error {
 	if c.Args.OldSpec == "" || c.Args.NewSpec == "" {
 		return errors.New(`missing arguments for diff command (use --help for more info)`)
@@ -44,7 +46,7 @@ func (c *DiffCommand) Execute(_ []string) error {
 		err    error
 	)
 	if c.Destination != "stdout" {
-		output, err = os.OpenFile(c.Destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+		output, err = os.Create(c.Destination)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Destination, err)
 		}
@@ -107,7 +109,7 @@ func (c *DiffCommand) readIgnores() (diff.SpecDifferences, error) {
 	defer func() {
 		_ = jsonFile.Close()
 	}()
-	byteValue, err := ioutil.ReadAll(jsonFile)
+	byteValue, err := io.ReadAll(jsonFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ignoreFile, err)
 	}

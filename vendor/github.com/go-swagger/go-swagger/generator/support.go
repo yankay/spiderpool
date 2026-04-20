@@ -1,17 +1,5 @@
-// Copyright 2015 go-swagger maintainers
-
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
 
 package generator
 
@@ -21,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -31,7 +20,7 @@ import (
 	"github.com/go-openapi/swag"
 )
 
-// GenerateServer generates a server application
+// GenerateServer generates a server application.
 func GenerateServer(name string, modelNames, operationIDs []string, opts *GenOpts) error {
 	generator, err := newAppGenerator(name, modelNames, operationIDs, opts)
 	if err != nil {
@@ -40,7 +29,7 @@ func GenerateServer(name string, modelNames, operationIDs []string, opts *GenOpt
 	return generator.Generate()
 }
 
-// GenerateSupport generates the supporting files for an API
+// GenerateSupport generates the supporting files for an API.
 func GenerateSupport(name string, modelNames, operationIDs []string, opts *GenOpts) error {
 	generator, err := newAppGenerator(name, modelNames, operationIDs, opts)
 	if err != nil {
@@ -49,7 +38,7 @@ func GenerateSupport(name string, modelNames, operationIDs []string, opts *GenOp
 	return generator.GenerateSupport(nil)
 }
 
-// GenerateMarkdown documentation for a swagger specification
+// GenerateMarkdown documentation for a swagger specification.
 func GenerateMarkdown(output string, modelNames, operationIDs []string, opts *GenOpts) error {
 	if output == "." || output == "" {
 		output = "markdown.md"
@@ -57,6 +46,9 @@ func GenerateMarkdown(output string, modelNames, operationIDs []string, opts *Ge
 
 	if err := opts.EnsureDefaults(); err != nil {
 		return err
+	}
+	if opts.Target != "" && opts.Target != "." {
+		output = filepath.Join(opts.Target, output)
 	}
 	MarkdownSectionOpts(opts, output)
 
@@ -153,7 +145,7 @@ func (a *appGenerator) Generate() error {
 	}
 
 	if a.DumpData {
-		return dumpData(app)
+		return dumpData(os.Stdout, app)
 	}
 
 	// NOTE: relative to previous implem with chan.
@@ -184,7 +176,7 @@ func (a *appGenerator) Generate() error {
 			}
 			// optional OperationGroups templates generation
 			if err := a.GenOpts.renderOperationGroup(&opg); err != nil {
-				return fmt.Errorf("error while rendering operation group: %v", err)
+				return fmt.Errorf("error while rendering operation group: %w", err)
 			}
 		}
 	}
@@ -217,11 +209,13 @@ func (a *appGenerator) GenerateSupport(ap *GenApp) error {
 	app.DefaultImports[pkgAlias] = serverPath
 	app.ServerPackageAlias = pkgAlias
 
-	// add client import for cli generation
-	clientPath := path.Join(baseImport,
-		a.GenOpts.LanguageOpts.ManglePackagePath(a.ClientPackage, defaultClientTarget))
-	clientPkgAlias := importAlias(clientPath)
-	app.DefaultImports[clientPkgAlias] = clientPath
+	if a.GenOpts.IncludeCLi { // no need to add this import when there is no CLI
+		// add client import for cli generation
+		clientPath := path.Join(baseImport,
+			a.GenOpts.LanguageOpts.ManglePackagePath(a.ClientPackage, defaultClientTarget))
+		clientPkgAlias := importAlias(clientPath)
+		app.DefaultImports[clientPkgAlias] = clientPath
+	}
 
 	return a.GenOpts.renderApplication(app)
 }
@@ -245,6 +239,7 @@ func (a *appGenerator) makeSecuritySchemes() GenSecuritySchemes {
 	return gatherSecuritySchemes(requiredSecuritySchemes, a.Name, a.Principal, a.Receiver, a.GenOpts.PrincipalIsNullable())
 }
 
+//nolint:gocognit,gocyclo,cyclop,maintidx // TODO(fredbi): refactor
 func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 	log.Println("building a plan for generation")
 
@@ -260,11 +255,13 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 	baseImport := a.GenOpts.LanguageOpts.baseImport(a.Target)
 	defaultImports := a.GenOpts.defaultImports()
 
-	imports := make(map[string]string, 50)
+	imports := make(map[string]string, sensibleDefaultMapAlloc)
 	alias := deconflictPkg(a.GenOpts.LanguageOpts.ManglePackageName(a.OperationsPackage, defaultOperationsTarget), renameAPIPackage)
-	imports[alias] = path.Join(
-		baseImport,
-		a.GenOpts.LanguageOpts.ManglePackagePath(a.OperationsPackage, defaultOperationsTarget))
+	if !a.GenOpts.IsClient { // we don't want to inject this import for clients
+		imports[alias] = path.Join(
+			baseImport,
+			a.GenOpts.LanguageOpts.ManglePackagePath(a.OperationsPackage, defaultOperationsTarget))
+	}
 
 	implAlias := ""
 	if a.GenOpts.ImplementationPackage != "" {
@@ -284,7 +281,7 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 			a.GenOpts,
 		)
 		if err != nil {
-			return GenApp{}, fmt.Errorf("error in model %s while planning definitions: %v", mn, err)
+			return GenApp{}, fmt.Errorf("error in model %s while planning definitions: %w", mn, err)
 		}
 		if model != nil {
 			if !model.External {
@@ -304,6 +301,10 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 	log.Printf("planning operations (found: %d)", len(a.Operations))
 
 	genOps := make(GenOperations, 0, len(a.Operations))
+	consumesIndex := make(map[string][]string)
+	producesIndex := make(map[string][]string)
+	pristineDoc := a.SpecDoc.Pristine()
+
 	for operationName, opp := range a.Operations {
 		o := opp.Op
 		o.ID = operationName
@@ -316,6 +317,7 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 			Imports:          imports,
 			DefaultScheme:    a.DefaultScheme,
 			Doc:              a.SpecDoc,
+			PristineDefs:     pristineDoc,
 			Analyzed:         a.Analyzed,
 			BasePath:         a.SpecDoc.BasePath(),
 			GenOpts:          a.GenOpts,
@@ -355,7 +357,18 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 
 		op.ReceiverName = receiver
 		op.Tags = tags // ordered tags for this operation, possibly filtered by CLI params
-		genOps = append(genOps, op)
+
+		allConsumes := pruneEmpty(op.ConsumesMediaTypes)
+		if bldr.DefaultConsumes != "" {
+			allConsumes = append(allConsumes, bldr.DefaultConsumes)
+		}
+		consumesIndex[bldr.Name] = allConsumes
+
+		allProduces := pruneEmpty(op.ProducesMediaTypes)
+		if bldr.DefaultProduces != "" {
+			allProduces = append(allProduces, bldr.DefaultProduces)
+		}
+		producesIndex[bldr.Name] = allProduces
 
 		if !a.GenOpts.SkipTagPackages && tag != "" {
 			importPath := filepath.ToSlash(
@@ -364,8 +377,19 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 					a.GenOpts.LanguageOpts.ManglePackagePath(a.OperationsPackage, defaultOperationsTarget),
 					a.GenOpts.LanguageOpts.ManglePackageName(bldr.APIPackage, defaultOperationsTarget),
 				))
+
+			// check for possible conflicts that requires import aliasing
+			pth, aliasUsed := defaultImports[bldr.APIPackageAlias]
+			if (a.GenOpts.IsClient && bldr.APIPackageAlias == a.GenOpts.ClientPackage) || // we don't want import to shadow the current package
+				(a.GenOpts.IncludeCLi && bldr.APIPackageAlias == a.GenOpts.CliPackage) ||
+				(aliasUsed && pth != importPath) { // was already imported with a different target
+				op.PackageAlias = renameOperationPackage(tags, bldr.APIPackageAlias)
+				bldr.APIPackageAlias = op.PackageAlias
+			}
 			defaultImports[bldr.APIPackageAlias] = importPath
 		}
+
+		genOps = append(genOps, op)
 	}
 	sort.Sort(genOps)
 
@@ -377,9 +401,15 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 	log.Printf("grouping operations into packages (packages: %d)", len(opsGroupedByPackage))
 
 	opGroups := make(GenOperationGroups, 0, len(opsGroupedByPackage))
+	const sensibleConsumesAlloc = 2
+
 	for k, v := range opsGroupedByPackage {
-		log.Printf("operations for package packages %q (found: %d)", k, len(v))
+		log.Printf("operations for package %q (found: %d)", k, len(v))
 		sort.Sort(v)
+
+		consumesInGroup := make([]string, 0, sensibleConsumesAlloc)
+		producesInGroup := make([]string, 0, sensibleConsumesAlloc)
+
 		// trim duplicate extra schemas within the same package
 		vv := make(GenOperations, 0, len(v))
 		seenExtraSchema := make(map[string]bool)
@@ -393,6 +423,9 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 			}
 			op.ExtraSchemas = uniqueExtraSchemas
 			vv = append(vv, op)
+
+			consumesInGroup = concatUnique(consumesInGroup, consumesIndex[op.Name])
+			producesInGroup = concatUnique(producesInGroup, producesIndex[op.Name])
 		}
 		var pkg string
 		if len(vv) > 0 {
@@ -413,6 +446,19 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 			Imports:        imports,
 			RootPackage:    a.APIPackage,
 			GenOpts:        a.GenOpts,
+		}
+
+		if a.GenOpts.IsClient {
+			// generating extra options to switch media type in client
+			if len(consumesInGroup) > 1 || len(producesInGroup) > 1 {
+				sort.Strings(producesInGroup)
+				sort.Strings(consumesInGroup)
+				options := &GenClientOptions{
+					ProducesMediaTypes: producesInGroup,
+					ConsumesMediaTypes: consumesInGroup,
+				}
+				opGroup.ClientOptions = options
+			}
 		}
 		opGroups = append(opGroups, opGroup)
 	}
@@ -438,8 +484,14 @@ func (a *appGenerator) makeCodegenApp() (GenApp, error) {
 		basePath = sw.BasePath
 	}
 
-	jsonb, _ := json.MarshalIndent(a.SpecDoc.OrigSpec(), "", "  ")
-	flatjsonb, _ := json.MarshalIndent(a.SpecDoc.Spec(), "", "  ")
+	jsonb, err := json.MarshalIndent(a.SpecDoc.OrigSpec(), "", "  ")
+	if err != nil {
+		return GenApp{}, err
+	}
+	flatjsonb, err := json.MarshalIndent(a.SpecDoc.Spec(), "", "  ")
+	if err != nil {
+		return GenApp{}, err
+	}
 
 	return GenApp{
 		GenCommon: GenCommon{

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package diff
 
 import (
@@ -7,98 +10,118 @@ import (
 	"log"
 )
 
-// SpecChangeCode enumerates the various types of diffs from one spec to another
+// SpecChangeCode enumerates the various types of diffs from one spec to another.
 type SpecChangeCode int
 
 const (
-	// NoChangeDetected - the specs have no changes
+	// NoChangeDetected - the specs have no changes.
 	NoChangeDetected SpecChangeCode = iota
-	// DeletedProperty - A message property has been deleted in the new spec
+	// DeletedProperty - A message property has been deleted in the new spec.
 	DeletedProperty
-	// AddedProperty - A message property has been added in the new spec
+	// AddedProperty - A message property has been added in the new spec.
 	AddedProperty
-	// AddedRequiredProperty - A required message property has been added in the new spec
+	// AddedRequiredProperty - A required message property has been added in the new spec.
 	AddedRequiredProperty
-	// DeletedOptionalParam - An endpoint parameter has been deleted in the new spec
+	// DeletedOptionalParam - An endpoint parameter has been deleted in the new spec.
 	DeletedOptionalParam
-	// ChangedDescripton - Changed a description
-	ChangedDescripton
-	// AddedDescripton - Added a description
-	AddedDescripton
-	// DeletedDescripton - Deleted a description
-	DeletedDescripton
-	// ChangedTag - Changed a tag
+	// ChangedDescription - Changed a description.
+	ChangedDescription
+	// AddedDescription - Added a description.
+	AddedDescription
+	// DeletedDescription - Deleted a description.
+	DeletedDescription
+	// ChangedTag - Changed a tag.
 	ChangedTag
-	// AddedTag - Added a tag
+	// AddedTag - Added a tag.
 	AddedTag
-	// DeletedTag - Deleted a tag
+	// DeletedTag - Deleted a tag.
 	DeletedTag
-	// DeletedResponse - An endpoint response has been deleted in the new spec
+	// DeletedResponse - An endpoint response has been deleted in the new spec.
 	DeletedResponse
-	// DeletedEndpoint - An endpoint has been deleted in the new spec
+	// DeletedEndpoint - An endpoint has been deleted in the new spec.
 	DeletedEndpoint
-	// DeletedDeprecatedEndpoint - A deprecated endpoint has been deleted in the new spec
+	// DeletedDeprecatedEndpoint - A deprecated endpoint has been deleted in the new spec.
 	DeletedDeprecatedEndpoint
-	// AddedRequiredParam - A required parameter has been added in the new spec
+	// AddedRequiredParam - A required parameter has been added in the new spec.
 	AddedRequiredParam
-	// DeletedRequiredParam - A required parameter has been deleted in the new spec
+	// DeletedRequiredParam - A required parameter has been deleted in the new spec.
 	DeletedRequiredParam
-	// AddedEndpoint - An endpoint has been added in the new spec
+	// AddedEndpoint - An endpoint has been added in the new spec.
 	AddedEndpoint
-	// WidenedType - An type has been changed to a more permissive type eg int->string
+	// WidenedType - An type has been changed to a more permissive type eg int->string.
 	WidenedType
-	// NarrowedType - An type has been changed to a less permissive type eg string->int
+	// NarrowedType - An type has been changed to a less permissive type eg string->int.
 	NarrowedType
-	// ChangedToCompatibleType - An type has been changed to a compatible type eg password->string
+	// ChangedToCompatibleType - An type has been changed to a compatible type eg password->string.
 	ChangedToCompatibleType
-	// ChangedType - An type has been changed to a type whose relative compatibility cannot be determined
+	// ChangedType - An type has been changed to a type whose relative compatibility cannot be determined.
 	ChangedType
-	// AddedEnumValue - An enum type has had a new potential value added to it
+	// AddedEnumValue - An enum type has had a new potential value added to it.
 	AddedEnumValue
-	// DeletedEnumValue - An enum type has had a existing value removed from it
+	// DeletedEnumValue - An enum type has had a existing value removed from it.
 	DeletedEnumValue
-	// AddedOptionalParam - A new optional parameter has been added to the new spec
+	// AddedOptionalParam - A new optional parameter has been added to the new spec.
 	AddedOptionalParam
-	// ChangedOptionalToRequired - An optional parameter is now required in the new spec
+	// ChangedOptionalToRequired - An optional parameter is now required in the new spec.
 	ChangedOptionalToRequired
-	// ChangedRequiredToOptional - An required parameter is now optional in the new spec
+	// ChangedRequiredToOptional - An required parameter is now optional in the new spec.
 	ChangedRequiredToOptional
-	// AddedResponse An endpoint has new response code in the new spec
+	// AddedResponse An endpoint has new response code in the new spec.
 	AddedResponse
-	// AddedConsumesFormat - a new consumes format (json/xml/yaml etc) has been added in the new spec
+	// AddedConsumesFormat - a new consumes format (json/xml/yaml etc) has been added in the new spec.
 	AddedConsumesFormat
-	// DeletedConsumesFormat - an existing format has been removed in the new spec
+	// DeletedConsumesFormat - an existing format has been removed in the new spec.
 	DeletedConsumesFormat
-	// AddedProducesFormat - a new produces format (json/xml/yaml etc) has been added in the new spec
+	// AddedProducesFormat - a new produces format (json/xml/yaml etc) has been added in the new spec.
 	AddedProducesFormat
-	// DeletedProducesFormat - an existing produces format has been removed in the new spec
+	// DeletedProducesFormat - an existing produces format has been removed in the new spec.
 	DeletedProducesFormat
-	// AddedSchemes - a new scheme has been added to the new spec
+	// AddedSchemes - a new scheme has been added to the new spec.
 	AddedSchemes
-	// DeletedSchemes - a scheme has been removed from the new spec
+	// DeletedSchemes - a scheme has been removed from the new spec.
 	DeletedSchemes
 	// ChangedHostURL - the host url has been changed. If this is used in the client generation, then clients will break.
 	ChangedHostURL
 	// ChangedBasePath - the host base path has been changed. If this is used in the client generation, then clients will break.
 	ChangedBasePath
-	// AddedResponseHeader Added a header Item
+	// AddedResponseHeader Added a header Item.
 	AddedResponseHeader
-	// ChangedResponseHeader Added a header Item
+	// ChangedResponseHeader Added a header Item.
 	ChangedResponseHeader
-	// DeletedResponseHeader Added a header Item
+	// DeletedResponseHeader Added a header Item.
 	DeletedResponseHeader
-	// RefTargetChanged Changed a ref to point to a different object
+	// RefTargetChanged Changed a ref to point to a different object.
 	RefTargetChanged
-	// RefTargetRenamed Renamed a ref to point to the same object
+	// RefTargetRenamed Renamed a ref to point to the same object.
 	RefTargetRenamed
-	// DeletedConstraint Deleted a schema constraint
+	// DeletedConstraint Deleted a schema constraint.
 	DeletedConstraint
-	// AddedConstraint Added a schema constraint
+	// AddedConstraint Added a schema constraint.
 	AddedConstraint
-	// DeletedDefinition removed one of the definitions
+	// DeletedDefinition removed one of the definitions.
 	DeletedDefinition
-	// AddedDefinition removed one of the definitions
+	// AddedDefinition removed one of the definitions.
 	AddedDefinition
+	// ChangedDefault - Changed default value.
+	ChangedDefault
+	// AddedDefault - Added a default value.
+	AddedDefault
+	// DeletedDefault - Deleted a default value.
+	DeletedDefault
+	// ChangedExample - Changed an example value.
+	ChangedExample
+	// AddedExample - Added an example value.
+	AddedExample
+	// DeletedExample - Deleted an example value.
+	DeletedExample
+	// ChangedCollectionFormat - A collectionFormat has been changed to a collectionFormat whose relative compatibility cannot be determined.
+	ChangedCollectionFormat
+	// DeletedExtension deleted an extension.
+	DeletedExtension
+	// AddedExtension added an extension.
+	AddedExtension
+	// ChangedExtensionValue changed an extension value.
+	ChangedExtensionValue
 )
 
 var toLongStringSpecChangeCode = map[SpecChangeCode]string{
@@ -108,9 +131,9 @@ var toLongStringSpecChangeCode = map[SpecChangeCode]string{
 	DeletedDeprecatedEndpoint: "Deleted a deprecated endpoint",
 	AddedRequiredProperty:     "Added required property",
 	DeletedProperty:           "Deleted property",
-	ChangedDescripton:         "Changed a description",
-	AddedDescripton:           "Added a description",
-	DeletedDescripton:         "Deleted a description",
+	ChangedDescription:        "Changed a description",
+	AddedDescription:          "Added a description",
+	DeletedDescription:        "Deleted a description",
 	ChangedTag:                "Changed a tag",
 	AddedTag:                  "Added a tag",
 	DeletedTag:                "Deleted a tag",
@@ -146,6 +169,16 @@ var toLongStringSpecChangeCode = map[SpecChangeCode]string{
 	AddedConstraint:           "Added a schema constraint",
 	DeletedDefinition:         "Deleted a schema definition",
 	AddedDefinition:           "Added a schema definition",
+	ChangedDefault:            "Default value is changed",
+	AddedDefault:              "Default value is added",
+	DeletedDefault:            "Default value is removed",
+	ChangedExample:            "Example value is changed",
+	AddedExample:              "Example value is added",
+	DeletedExample:            "Example value is removed",
+	ChangedCollectionFormat:   "Changed collection format",
+	DeletedExtension:          "Deleted Extension",
+	AddedExtension:            "Added Extension",
+	ChangedExtensionValue:     "Changed Extension Value",
 }
 
 var toStringSpecChangeCode = map[SpecChangeCode]string{
@@ -156,9 +189,9 @@ var toStringSpecChangeCode = map[SpecChangeCode]string{
 	AddedRequiredProperty:     "AddedRequiredProperty",
 	DeletedProperty:           "DeletedProperty",
 	AddedProperty:             "AddedProperty",
-	ChangedDescripton:         "ChangedDescription",
-	AddedDescripton:           "AddedDescription",
-	DeletedDescripton:         "DeletedDescription",
+	ChangedDescription:        "ChangedDescription",
+	AddedDescription:          "AddedDescription",
+	DeletedDescription:        "DeletedDescription",
 	ChangedTag:                "ChangedTag",
 	AddedTag:                  "AddedTag",
 	DeletedTag:                "DeletedTag",
@@ -193,26 +226,36 @@ var toStringSpecChangeCode = map[SpecChangeCode]string{
 	AddedConstraint:           "AddedConstraint",
 	DeletedDefinition:         "DeletedDefinition",
 	AddedDefinition:           "AddedDefinition",
+	ChangedDefault:            "ChangedDefault",
+	AddedDefault:              "AddedDefault",
+	DeletedDefault:            "DeletedDefault",
+	ChangedExample:            "ChangedExample",
+	AddedExample:              "AddedExample",
+	DeletedExample:            "DeletedExample",
+	ChangedCollectionFormat:   "ChangedCollectionFormat",
+	DeletedExtension:          "DeletedExtension",
+	AddedExtension:            "AddedExtension",
+	ChangedExtensionValue:     "ChangedExtensionValue",
 }
 
 var toIDSpecChangeCode = map[string]SpecChangeCode{}
 
-// Description returns an english version of this error
+// Description returns an english version of this error.
 func (s SpecChangeCode) Description() (result string) {
 	result, ok := toLongStringSpecChangeCode[s]
 	if !ok {
 		log.Printf("warning: No description for %v", s)
 		result = "UNDEFINED"
 	}
-	return
+	return result
 }
 
-// MarshalJSON marshals the enum as a quoted json string
+// MarshalJSON marshals the enum as a quoted json string.
 func (s SpecChangeCode) MarshalJSON() ([]byte, error) {
 	return stringAsQuotedBytes(toStringSpecChangeCode[s])
 }
 
-// UnmarshalJSON unmashalls a quoted json string to the enum value
+// UnmarshalJSON unmashalls a quoted json string to the enum value.
 func (s *SpecChangeCode) UnmarshalJSON(b []byte) error {
 	str, err := readStringFromByteStream(b)
 	if err != nil {
@@ -229,14 +272,16 @@ func (s *SpecChangeCode) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Compatibility - whether this is a breaking or non-breaking change
+// Compatibility - whether this is a breaking or non-breaking change.
 type Compatibility int
 
 const (
-	// Breaking this change could break existing clients
+	// Breaking this change could break existing clients.
 	Breaking Compatibility = iota
-	// NonBreaking This is a backwards-compatible API change
+	// NonBreaking This is a backwards-compatible API change.
 	NonBreaking
+	// Warning changes are technically non-breaking but can cause behavior changes in client and thus should be reported differently.
+	Warning
 )
 
 func (s Compatibility) String() string {
@@ -246,16 +291,17 @@ func (s Compatibility) String() string {
 var toStringCompatibility = map[Compatibility]string{
 	Breaking:    "Breaking",
 	NonBreaking: "NonBreaking",
+	Warning:     "Warning",
 }
 
 var toIDCompatibility = map[string]Compatibility{}
 
-// MarshalJSON marshals the enum as a quoted json string
+// MarshalJSON marshals the enum as a quoted json string.
 func (s Compatibility) MarshalJSON() ([]byte, error) {
 	return stringAsQuotedBytes(toStringCompatibility[s])
 }
 
-// UnmarshalJSON unmashals a quoted json string to the enum value
+// UnmarshalJSON unmashals a quoted json string to the enum value.
 func (s *Compatibility) UnmarshalJSON(b []byte) error {
 	str, err := readStringFromByteStream(b)
 	if err != nil {

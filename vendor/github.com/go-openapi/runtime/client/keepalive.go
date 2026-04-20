@@ -1,8 +1,10 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package client
 
 import (
 	"io"
-	"io/ioutil"
 	"net/http"
 	"sync/atomic"
 )
@@ -11,7 +13,7 @@ import (
 // so that go will reuse the TCP connections.
 // This is not enabled by default because there are servers where
 // the response never gets closed and that would make the code hang forever.
-// So instead it's provided as a http client middleware that can be used to override
+// So instead it's provided as a [http] client [middleware] that can be used to override
 // any request.
 func KeepAliveTransport(rt http.RoundTripper) http.RoundTripper {
 	return &keepAliveTransport{wrapped: rt}
@@ -49,8 +51,7 @@ func (d *drainingReadCloser) Close() error {
 		// If the reader side (a HTTP server) is misbehaving, it still may send
 		// some bytes, but the closer ignores them to keep the underling
 		// connection open.
-		//nolint:errcheck
-		io.Copy(ioutil.Discard, d.rdr)
+		_, _ = io.Copy(io.Discard, d.rdr)
 	}
 	return d.rdr.Close()
 }

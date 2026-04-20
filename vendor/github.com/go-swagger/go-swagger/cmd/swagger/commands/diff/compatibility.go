@@ -1,6 +1,9 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package diff
 
-// CompatibilityPolicy decides which changes are breaking and which are not
+// CompatibilityPolicy decides which changes are breaking and which are not.
 type CompatibilityPolicy struct {
 	ForResponse map[SpecChangeCode]Compatibility
 	ForRequest  map[SpecChangeCode]Compatibility
@@ -26,19 +29,22 @@ func init() {
 			AddedResponseHeader:     NonBreaking,
 			ChangedResponseHeader:   Breaking,
 			DeletedResponseHeader:   Breaking,
-			ChangedDescripton:       NonBreaking,
-			AddedDescripton:         NonBreaking,
-			DeletedDescripton:       NonBreaking,
+			ChangedDescription:      NonBreaking,
+			AddedDescription:        NonBreaking,
+			DeletedDescription:      NonBreaking,
 			ChangedTag:              NonBreaking,
 			AddedTag:                NonBreaking,
 			DeletedTag:              NonBreaking,
 			DeletedConstraint:       Breaking,
 			AddedConstraint:         NonBreaking,
+			DeletedExtension:        Warning,
+			AddedExtension:          Warning,
+			ChangedExtensionValue:   Warning,
 		},
 		ForRequest: map[SpecChangeCode]Compatibility{
 			AddedRequiredProperty:     Breaking,
 			DeletedProperty:           Breaking,
-			AddedProperty:             Breaking,
+			AddedProperty:             NonBreaking,
 			AddedOptionalParam:        NonBreaking,
 			AddedRequiredParam:        Breaking,
 			DeletedOptionalParam:      NonBreaking,
@@ -51,14 +57,24 @@ func init() {
 			ChangedRequiredToOptional: NonBreaking,
 			AddedEnumValue:            NonBreaking,
 			DeletedEnumValue:          Breaking,
-			ChangedDescripton:         NonBreaking,
-			AddedDescripton:           NonBreaking,
-			DeletedDescripton:         NonBreaking,
+			ChangedDescription:        NonBreaking,
+			AddedDescription:          NonBreaking,
+			DeletedDescription:        NonBreaking,
 			ChangedTag:                NonBreaking,
 			AddedTag:                  NonBreaking,
 			DeletedTag:                NonBreaking,
 			DeletedConstraint:         NonBreaking,
 			AddedConstraint:           Breaking,
+			ChangedDefault:            Warning,
+			AddedDefault:              Warning,
+			DeletedDefault:            Warning,
+			ChangedExample:            NonBreaking,
+			AddedExample:              NonBreaking,
+			DeletedExample:            NonBreaking,
+			ChangedCollectionFormat:   Breaking,
+			DeletedExtension:          Warning,
+			AddedExtension:            Warning,
+			ChangedExtensionValue:     Warning,
 		},
 		ForChange: map[SpecChangeCode]Compatibility{
 			NoChangeDetected:          NonBreaking,
@@ -73,9 +89,9 @@ func init() {
 			DeletedSchemes:            Breaking,
 			ChangedHostURL:            Breaking,
 			ChangedBasePath:           Breaking,
-			ChangedDescripton:         NonBreaking,
-			AddedDescripton:           NonBreaking,
-			DeletedDescripton:         NonBreaking,
+			ChangedDescription:        NonBreaking,
+			AddedDescription:          NonBreaking,
+			DeletedDescription:        NonBreaking,
 			ChangedTag:                NonBreaking,
 			AddedTag:                  NonBreaking,
 			DeletedTag:                NonBreaking,
@@ -83,6 +99,9 @@ func init() {
 			RefTargetRenamed:          NonBreaking,
 			AddedDefinition:           NonBreaking,
 			DeletedDefinition:         NonBreaking,
+			DeletedExtension:          Warning,
+			AddedExtension:            Warning,
+			ChangedExtensionValue:     Warning,
 		},
 	}
 }
