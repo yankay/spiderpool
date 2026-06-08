@@ -13,7 +13,7 @@ func ({{.ReceiverName}} *{{ pascalize .Name }}) UnmarshalJSON(data []byte) error
   *{{ .ReceiverName }} = rcv
 
   // stage 2, remove properties and add to map
-  stage2 := make(map[string]{{ if .AdditionalProperties }}json.RawMessage{{ else }}interface{}{{ end }})
+  stage2 := make(map[string]{{ if .AdditionalProperties }}json.RawMessage{{ else }}any{{ end }})
   if err := json.Unmarshal(data, &stage2); err != nil {
     return err
   }
@@ -70,7 +70,7 @@ func ({{.ReceiverName}} {{ pascalize .Name }}) MarshalJSON() ([]byte, error) {
   }
 
   // concatenate the 2 objects
-  return swag.ConcatJSON(props, additional), nil
+  return jsonutils.ConcatJSON(props, additional), nil
 }
 {{- end }}
 

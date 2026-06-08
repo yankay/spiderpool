@@ -1,16 +1,5 @@
-// Copyright 2015 go-swagger maintainers
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
 
 package commands
 
@@ -18,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/strfmt"
@@ -25,7 +15,7 @@ import (
 )
 
 const (
-	// Output messages
+	// Output messages.
 	missingArgMsg  = "the validate command requires the swagger document url to be specified"
 	validSpecMsg   = "\nThe swagger spec at %q is valid against swagger specification %s\n"
 	invalidSpecMsg = "\nThe swagger spec at %q is invalid against swagger specification %s.\nSee errors below:\n"
@@ -33,14 +23,14 @@ const (
 )
 
 // ValidateSpec is a command that validates a swagger document
-// against the swagger specification
+// against the swagger specification.
 type ValidateSpec struct {
 	// SchemaURL string `long:"schema" description:"The schema url to use" default:"http://swagger.io/v2/schema.json"`
-	SkipWarnings bool `long:"skip-warnings" description:"when present will not show up warnings upon validation"`
-	StopOnError  bool `long:"stop-on-error" description:"when present will not continue validation after critical errors are found"`
+	SkipWarnings bool `description:"when present will not show up warnings upon validation"                    long:"skip-warnings"`
+	StopOnError  bool `description:"when present will not continue validation after critical errors are found" long:"stop-on-error"`
 }
 
-// Execute validates the spec
+// Execute validates the spec.
 func (c *ValidateSpec) Execute(args []string) error {
 	if len(args) == 0 {
 		return errors.New(missingArgMsg)
@@ -72,11 +62,12 @@ func (c *ValidateSpec) Execute(args []string) error {
 		}
 	}
 	if result.HasErrors() {
-		str := fmt.Sprintf(invalidSpecMsg, swaggerDoc, specDoc.Version())
+		var buf strings.Builder
+		fmt.Fprintf(&buf, invalidSpecMsg, swaggerDoc, specDoc.Version())
 		for _, desc := range result.Errors {
-			str += fmt.Sprintf("- %s\n", desc.Error())
+			fmt.Fprintf(&buf, "- %s\n", desc.Error())
 		}
-		return errors.New(str)
+		return errors.New(buf.String())
 	}
 
 	return nil

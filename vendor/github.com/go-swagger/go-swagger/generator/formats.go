@@ -1,23 +1,12 @@
-// Copyright 2015 go-swagger maintainers
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
 
 package generator
 
-// TODO: we may probably find a way to register most of this dynamically from strfmt
+// Proposal for enhancement(fredbi): we should probably find a way to register most of this dynamically from strfmt.
 
-// map of function calls to be generated to get the zero value of a given type
-var zeroes = map[string]string{
+// map of function calls to be generated to get the zero value of a given type.
+var zeroes = map[string]string{ //nolint:gosec // G101 false positive: not credentials, these are zero-value literals for code generation
 	"bool":    "false",
 	"float32": "0",
 	"float64": "0",
@@ -57,42 +46,50 @@ var zeroes = map[string]string{
 	"strfmt.UUID3":      "strfmt.UUID3(\"\")",
 	"strfmt.UUID4":      "strfmt.UUID4(\"\")",
 	"strfmt.UUID5":      "strfmt.UUID5(\"\")",
+	"strfmt.ULID":       "strfmt.ULID(\"\")",
 	// "file":       "runtime.File",
 }
 
 // conversion functions from string representation to a numerical or boolean
-// primitive type
+// primitive type.
 var stringConverters = map[string]string{
-	"bool":    "swag.ConvertBool",
-	"float32": "swag.ConvertFloat32",
-	"float64": "swag.ConvertFloat64",
-	"int8":    "swag.ConvertInt8",
-	"int16":   "swag.ConvertInt16",
-	"int32":   "swag.ConvertInt32",
-	"int64":   "swag.ConvertInt64",
-	"uint8":   "swag.ConvertUint8",
-	"uint16":  "swag.ConvertUint16",
-	"uint32":  "swag.ConvertUint32",
-	"uint64":  "swag.ConvertUint64",
+	"bool":    "conv.ConvertBool",
+	"float32": "conv.ConvertFloat32",
+	"float64": "conv.ConvertFloat64",
+	"int8":    "conv.ConvertInt8",
+	"int16":   "conv.ConvertInt16",
+	"int32":   "conv.ConvertInt32",
+	"int64":   "conv.ConvertInt64",
+	"uint8":   "conv.ConvertUint8",
+	"uint16":  "conv.ConvertUint16",
+	"uint32":  "conv.ConvertUint32",
+	"uint64":  "conv.ConvertUint64",
 }
+
+const (
+	// generic converters.
+	formatFloat = "conv.FormatFloat"
+	formatInt   = "conv.FormatInteger"
+	formatUint  = "conv.FormatUinteger"
+)
 
 // formatting (string representation) functions from a native representation
-// of a numerical or boolean primitive type
+// of a numerical or boolean primitive type.
 var stringFormatters = map[string]string{
-	"bool":    "swag.FormatBool",
-	"float32": "swag.FormatFloat32",
-	"float64": "swag.FormatFloat64",
-	"int8":    "swag.FormatInt8",
-	"int16":   "swag.FormatInt16",
-	"int32":   "swag.FormatInt32",
-	"int64":   "swag.FormatInt64",
-	"uint8":   "swag.FormatUint8",
-	"uint16":  "swag.FormatUint16",
-	"uint32":  "swag.FormatUint32",
-	"uint64":  "swag.FormatUint64",
+	"bool":    "conv.FormatBool",
+	"float32": formatFloat,
+	"float64": formatFloat,
+	"int8":    formatInt,
+	"int16":   formatInt,
+	"int32":   formatInt,
+	"int64":   formatInt,
+	"uint8":   formatUint,
+	"uint16":  formatUint,
+	"uint32":  formatUint,
+	"uint64":  formatUint,
 }
 
-// typeMapping contains a mapping of type name to go type
+// typeMapping contains a mapping of type name to go type.
 var typeMapping = map[string]string{
 	// Standard formats with native, straightforward, mapping
 	"string":  "string",
@@ -103,7 +100,18 @@ var typeMapping = map[string]string{
 	"file": "runtime.File",
 }
 
-// formatMapping contains a type-specific version of mapping of format to go type
+// swaggerTypeName contains a mapping from go type to swagger type or format.
+var swaggerTypeName map[string]string
+
+func init() {
+	// build the reverse-lookup index of typeMapping
+	swaggerTypeName = make(map[string]string)
+	for k, v := range typeMapping {
+		swaggerTypeName[v] = k
+	}
+}
+
+// formatMapping contains a type-specific version of mapping of format to go type.
 var formatMapping = map[string]map[string]string{
 	"number": {
 		"double": "float64",
@@ -131,7 +139,7 @@ var formatMapping = map[string]map[string]string{
 		"uint32": "uint32",
 		"uint64": "uint64",
 	},
-	"string": {
+	"string": { //nolint:gosec // G101 false positive: not credentials, this maps OpenAPI string formats to Go types
 		"char": "rune",
 		// Extended format registry from go-openapi/strfmt.
 		// Currently, 23 such formats are supported (default strftm registry),
@@ -165,12 +173,13 @@ var formatMapping = map[string]map[string]string{
 		"uuid3":        "strfmt.UUID3",
 		"uuid4":        "strfmt.UUID4",
 		"uuid5":        "strfmt.UUID5",
+		"ulid":         "strfmt.ULID",
 		// For file producers
 		"file": "runtime.File",
 	},
 }
 
-// go primitive types
+// go primitive types.
 var primitives = map[string]struct{}{
 	"bool":       {},
 	"byte":       {},
@@ -194,7 +203,7 @@ var primitives = map[string]struct{}{
 }
 
 // Formats with a custom formatter.
-// Currently, 23 such formats are supported
+// Currently, 23 such formats are supported.
 var customFormatters = map[string]struct{}{
 	"strfmt.Base64":     {},
 	"strfmt.CreditCard": {},

@@ -1,9 +1,11 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package generator
 
 import (
 	"github.com/go-openapi/analysis"
 	"github.com/go-openapi/spec"
-	"github.com/go-openapi/swag"
 )
 
 type discInfo struct {
@@ -27,13 +29,15 @@ type discee struct {
 	ParentRef  spec.Ref `json:"parentRef"`
 }
 
-func discriminatorInfo(doc *analysis.Spec) *discInfo {
+func discriminatorInfo(doc *analysis.Spec, opts *GenOpts) *discInfo {
 	baseTypes := make(map[string]discor)
+	mangle := opts.LanguageOpts.Mangler.ToGoName
+
 	for _, sch := range doc.AllDefinitions() {
 		if sch.Schema.Discriminator != "" {
 			tpe, _ := sch.Schema.Extensions.GetString(xGoName)
 			if tpe == "" {
-				tpe = swag.ToGoName(sch.Name)
+				tpe = mangle(sch.Name)
 			}
 			baseTypes[sch.Ref.String()] = discor{
 				FieldName: sch.Schema.Discriminator,
@@ -54,7 +58,7 @@ func discriminatorInfo(doc *analysis.Spec) *discInfo {
 					}
 					tpe, _ := sch.Schema.Extensions.GetString(xGoName)
 					if tpe == "" {
-						tpe = swag.ToGoName(sch.Name)
+						tpe = mangle(sch.Name)
 					}
 					dce := discee{
 						FieldName:  bt.FieldName,
@@ -71,5 +75,6 @@ func discriminatorInfo(doc *analysis.Spec) *discInfo {
 			}
 		}
 	}
+
 	return &discInfo{Discriminators: baseTypes, Discriminated: subTypes}
 }

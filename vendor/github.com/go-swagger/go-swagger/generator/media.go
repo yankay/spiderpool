@@ -1,15 +1,22 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package generator
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/go-openapi/runtime"
-	"github.com/go-openapi/swag"
 )
 
-const jsonSerializer = "json"
+const (
+	jsonSerializer = "json"
+	formData       = "formData"
+	multipartForm  = "multipartform"
+)
 
 var mediaTypeNames = map[*regexp.Regexp]string{
 	regexp.MustCompile("application/.*json"):                jsonSerializer,
@@ -32,30 +39,32 @@ var mediaTypeNames = map[*regexp.Regexp]string{
 	regexp.MustCompile("application/.*raw-stream"):          "bin",
 	regexp.MustCompile("application/x-www-form-urlencoded"): "urlform",
 	regexp.MustCompile("application/javascript"):            "txt",
-	regexp.MustCompile("multipart/form-data"):               "multipartform",
+	regexp.MustCompile("multipart/form-data"):               multipartForm,
 	regexp.MustCompile("image/.*"):                          "bin",
 	regexp.MustCompile("audio/.*"):                          "bin",
 	regexp.MustCompile("application/pdf"):                   "bin",
 }
 
 var knownProducers = map[string]string{
-	jsonSerializer:  "runtime.JSONProducer()",
-	"yaml":          "yamlpc.YAMLProducer()",
-	"xml":           "runtime.XMLProducer()",
-	"txt":           "runtime.TextProducer()",
-	"bin":           "runtime.ByteStreamProducer()",
-	"urlform":       "runtime.DiscardProducer",
-	"multipartform": "runtime.DiscardProducer",
+	jsonSerializer: "runtime.JSONProducer()",
+	"yaml":         "yamlpc.YAMLProducer()",
+	"xml":          "runtime.XMLProducer()",
+	"txt":          "runtime.TextProducer()",
+	"bin":          "runtime.ByteStreamProducer()",
+	"csv":          "runtime.CSVProducer()",
+	"urlform":      "runtime.DiscardProducer",
+	multipartForm:  "runtime.DiscardProducer",
 }
 
 var knownConsumers = map[string]string{
-	jsonSerializer:  "runtime.JSONConsumer()",
-	"yaml":          "yamlpc.YAMLConsumer()",
-	"xml":           "runtime.XMLConsumer()",
-	"txt":           "runtime.TextConsumer()",
-	"bin":           "runtime.ByteStreamConsumer()",
-	"urlform":       "runtime.DiscardConsumer",
-	"multipartform": "runtime.DiscardConsumer",
+	jsonSerializer: "runtime.JSONConsumer()",
+	"yaml":         "yamlpc.YAMLConsumer()",
+	"xml":          "runtime.XMLConsumer()",
+	"txt":          "runtime.TextConsumer()",
+	"bin":          "runtime.ByteStreamConsumer()",
+	"csv":          "runtime.CSVConsumer()",
+	"urlform":      "runtime.ByteStreamConsumer()",
+	multipartForm:  "runtime.ByteStreamConsumer()",
 }
 
 func wellKnownMime(tn string) (string, bool) {
@@ -67,13 +76,11 @@ func wellKnownMime(tn string) (string, bool) {
 	return "", false
 }
 
-func mediaMime(orig string) string {
-	return strings.SplitN(orig, ";", 2)[0]
-}
+const mimeParamParts = 2
 
 func mediaParameters(orig string) string {
-	parts := strings.SplitN(orig, ";", 2)
-	if len(parts) < 2 {
+	parts := strings.SplitN(orig, ";", mimeParamParts)
+	if len(parts) < mimeParamParts {
 		return ""
 	}
 	return parts[1]
@@ -86,13 +93,13 @@ func (a *appGenerator) makeSerializers(mediaTypes []string, known func(string) (
 
 	// build all required serializers
 	for _, media := range mediaTypes {
-		key := mediaMime(media)
+		key := a.mediaMime(media)
 		nm, ok := wellKnownMime(key)
 		if !ok {
 			// keep this serializer named, even though its implementation is empty (cf. #1557)
 			nm = key
 		}
-		name := swag.ToJSONName(nm)
+		name := a.mangler.ToJSONName(nm)
 		impl, _ := known(name)
 
 		ser, ok := uniqueSerializers[key]
@@ -109,14 +116,7 @@ func (a *appGenerator) makeSerializers(mediaTypes []string, known func(string) (
 		}
 		// provide all known parameters (currently unused by codegen templates)
 		if params := strings.TrimSpace(mediaParameters(media)); params != "" {
-			found := false
-			for _, p := range ser.Parameters {
-				if params == p {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(ser.Parameters, params) {
 				ser.Parameters = append(ser.Parameters, params)
 			}
 		}
