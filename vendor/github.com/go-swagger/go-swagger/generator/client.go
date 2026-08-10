@@ -1,36 +1,23 @@
-// Copyright 2015 go-swagger maintainers
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
 
 package generator
 
 import (
 	"errors"
+	"os"
+	"path"
 
-	"github.com/go-openapi/swag"
+	"github.com/go-openapi/swag/jsonutils"
 )
 
 // GenerateClient generates a client library for a swagger spec document.
 func GenerateClient(name string, modelNames, operationIDs []string, opts *GenOpts) error {
-	if err := opts.CheckOpts(); err != nil {
+	if err := opts.Prepare(); err != nil {
 		return err
 	}
 
-	if err := opts.setTemplates(); err != nil {
-		return err
-	}
-
-	specDoc, analyzed, err := opts.analyzeSpec()
+	specDoc, analyzed, err := newSpecAnalyzer(opts).analyzeSpec()
 	if err != nil {
 		return err
 	}
@@ -40,13 +27,20 @@ func GenerateClient(name string, modelNames, operationIDs []string, opts *GenOpt
 		return err
 	}
 
-	operations := gatherOperations(analyzed, operationIDs)
+	operations := gatherOperations(opts, analyzed, operationIDs)
 	if len(operations) == 0 {
 		return errors.New("no operations were selected")
 	}
 
+	mangler := opts.LanguageOpts.Mangler
+	funcMap := opts.funcMap
+	mediaMime, ok := funcMap["mediaTypeName"].(func(string) string)
+	if !ok {
+		return errors.New("internal error: mediaTypeName function expected to be func(string) string")
+	}
+
 	generator := appGenerator{
-		Name:              appNameOrDefault(specDoc, name, defaultClientName),
+		Name:              appNameOrDefault(opts.LanguageOpts, specDoc, name, defaultClientName),
 		SpecDoc:           specDoc,
 		Analyzed:          analyzed,
 		Models:            models,
@@ -59,11 +53,13 @@ func GenerateClient(name string, modelNames, operationIDs []string, opts *GenOpt
 		ServerPackage:     opts.LanguageOpts.ManglePackagePath(opts.ServerPackage, defaultServerTarget),
 		ClientPackage:     opts.LanguageOpts.ManglePackagePath(opts.ClientPackage, defaultClientTarget),
 		OperationsPackage: opts.LanguageOpts.ManglePackagePath(opts.ClientPackage, defaultClientTarget),
-		Principal:         opts.PrincipalAlias(),
+		Principal:         principalAlias(opts.Principal),
 		DefaultScheme:     opts.DefaultScheme,
 		DefaultProduces:   opts.DefaultProduces,
 		DefaultConsumes:   opts.DefaultConsumes,
 		GenOpts:           opts,
+		mangler:           mangler,
+		mediaMime:         mediaMime,
 	}
 	generator.Receiver = "o"
 	return (&clientGenerator{generator}).Generate()
@@ -78,9 +74,39 @@ func (c *clientGenerator) Generate() error {
 	if err != nil {
 		return err
 	}
+	app.DefaultImports["cli"] = path.Join(
+		c.GenOpts.LanguageOpts.BaseImport(c.Target),
+		"cli",
+	)
+	app.DefaultImports["client"] = path.Join(
+		c.GenOpts.LanguageOpts.BaseImport(c.Target),
+		"client",
+	)
+	app.DefaultImports["operations"] = path.Join(
+		c.GenOpts.LanguageOpts.BaseImport(c.Target),
+		"client",
+		"operations",
+	)
+
+	for i := range app.Models {
+		di := app.Models[i].DefaultImports
+		di["models"] = path.Join(
+			c.GenOpts.LanguageOpts.BaseImport(c.Target),
+			"models",
+		)
+		di["client"] = path.Join(
+			c.GenOpts.LanguageOpts.BaseImport(c.Target),
+			"client",
+		)
+	}
 
 	if c.DumpData {
-		return dumpData(swag.ToDynamicJSON(app))
+		var dynamicApp any
+		if err := jsonutils.FromDynamicJSON(app, &dynamicApp); err != nil {
+			return err
+		}
+
+		return dumpData(os.Stdout, dynamicApp)
 	}
 
 	if c.GenOpts.IncludeModel {
@@ -89,7 +115,7 @@ func (c *clientGenerator) Generate() error {
 				continue
 			}
 			mod := m
-			if err := c.GenOpts.renderDefinition(&mod); err != nil {
+			if err := newRenderer(c.GenOpts).renderDefinition(&mod); err != nil {
 				return err
 			}
 		}
@@ -100,18 +126,18 @@ func (c *clientGenerator) Generate() error {
 			opg := g
 			for _, o := range opg.Operations {
 				op := o
-				if err := c.GenOpts.renderOperation(&op); err != nil {
+				if err := newRenderer(c.GenOpts).renderOperation(&op); err != nil {
 					return err
 				}
 			}
-			if err := c.GenOpts.renderOperationGroup(&opg); err != nil {
+			if err := newRenderer(c.GenOpts).renderOperationGroup(&opg); err != nil {
 				return err
 			}
 		}
 	}
 
 	if c.GenOpts.IncludeSupport {
-		if err := c.GenOpts.renderApplication(&app); err != nil {
+		if err := newRenderer(c.GenOpts).renderApplication(&app); err != nil {
 			return err
 		}
 	}

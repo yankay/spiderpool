@@ -1,79 +1,95 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package generator
 
 import (
+	"iter"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/go-openapi/runtime"
-	"github.com/go-openapi/swag"
 )
 
-const jsonSerializer = "json"
+const (
+	jsonSerializer = "json"
+	formData       = "formData"
+	multipartForm  = "multipartform"
+)
 
-var mediaTypeNames = map[*regexp.Regexp]string{
-	regexp.MustCompile("application/.*json"):                jsonSerializer,
-	regexp.MustCompile("application/.*yaml"):                "yaml",
-	regexp.MustCompile("application/.*protobuf"):            "protobuf",
-	regexp.MustCompile("application/.*capnproto"):           "capnproto",
-	regexp.MustCompile("application/.*thrift"):              "thrift",
-	regexp.MustCompile("(?:application|text)/.*xml"):        "xml",
-	regexp.MustCompile("text/.*markdown"):                   "markdown",
-	regexp.MustCompile("text/.*html"):                       "html",
-	regexp.MustCompile("text/.*csv"):                        "csv",
-	regexp.MustCompile("text/.*tsv"):                        "tsv",
-	regexp.MustCompile("text/.*javascript"):                 "js",
-	regexp.MustCompile("text/.*css"):                        "css",
-	regexp.MustCompile("text/.*plain"):                      "txt",
-	regexp.MustCompile("application/.*octet-stream"):        "bin",
-	regexp.MustCompile("application/.*tar"):                 "tar",
-	regexp.MustCompile("application/.*gzip"):                "gzip",
-	regexp.MustCompile("application/.*gz"):                  "gzip",
-	regexp.MustCompile("application/.*raw-stream"):          "bin",
-	regexp.MustCompile("application/x-www-form-urlencoded"): "urlform",
-	regexp.MustCompile("application/javascript"):            "txt",
-	regexp.MustCompile("multipart/form-data"):               "multipartform",
-	regexp.MustCompile("image/.*"):                          "bin",
-	regexp.MustCompile("audio/.*"):                          "bin",
-	regexp.MustCompile("application/pdf"):                   "bin",
+type mediaMatcher struct {
+	rex  *regexp.Regexp
+	name string
+}
+
+func mediaTypeNames() iter.Seq[mediaMatcher] {
+	return slices.Values([]mediaMatcher{
+		{rex: regexp.MustCompile("application/.*json"), name: jsonSerializer},
+		{rex: regexp.MustCompile("application/.*yaml"), name: "yaml"},
+		{rex: regexp.MustCompile("application/.*protobuf"), name: "protobuf"},
+		{rex: regexp.MustCompile("application/.*capnproto"), name: "capnproto"},
+		{rex: regexp.MustCompile("application/.*thrift"), name: "thrift"},
+		{rex: regexp.MustCompile("(?:application|text)/.*xml"), name: "xml"},
+		{rex: regexp.MustCompile("text/.*markdown"), name: "markdown"},
+		{rex: regexp.MustCompile("text/.*html"), name: "html"},
+		{rex: regexp.MustCompile("text/.*csv"), name: "csv"},
+		{rex: regexp.MustCompile("text/.*tsv"), name: "tsv"},
+		{rex: regexp.MustCompile("text/.*javascript"), name: "js"},
+		{rex: regexp.MustCompile("text/.*css"), name: "css"},
+		{rex: regexp.MustCompile("text/.*plain"), name: "txt"},
+		{rex: regexp.MustCompile("application/.*octet-stream"), name: "bin"},
+		{rex: regexp.MustCompile("application/.*tar"), name: "tar"},
+		{rex: regexp.MustCompile("application/.*gzip"), name: "gzip"},
+		{rex: regexp.MustCompile("application/.*gz"), name: "gzip"},
+		{rex: regexp.MustCompile("application/.*raw-stream"), name: "bin"},
+		{rex: regexp.MustCompile("application/x-www-form-urlencoded"), name: "urlform"},
+		{rex: regexp.MustCompile("application/javascript"), name: "txt"},
+		{rex: regexp.MustCompile("multipart/form-data"), name: multipartForm},
+		{rex: regexp.MustCompile("image/.*"), name: "bin"},
+		{rex: regexp.MustCompile("audio/.*"), name: "bin"},
+		{rex: regexp.MustCompile("application/pdf"), name: "bin"},
+	})
 }
 
 var knownProducers = map[string]string{
-	jsonSerializer:  "runtime.JSONProducer()",
-	"yaml":          "yamlpc.YAMLProducer()",
-	"xml":           "runtime.XMLProducer()",
-	"txt":           "runtime.TextProducer()",
-	"bin":           "runtime.ByteStreamProducer()",
-	"urlform":       "runtime.DiscardProducer",
-	"multipartform": "runtime.DiscardProducer",
+	jsonSerializer: "runtime.JSONProducer()",
+	"yaml":         "yamlpc.YAMLProducer()",
+	"xml":          "runtime.XMLProducer()",
+	"txt":          "runtime.TextProducer()",
+	"bin":          "runtime.ByteStreamProducer()",
+	"csv":          "runtime.CSVProducer()",
+	"urlform":      "runtime.DiscardProducer",
+	multipartForm:  "runtime.DiscardProducer",
 }
 
 var knownConsumers = map[string]string{
-	jsonSerializer:  "runtime.JSONConsumer()",
-	"yaml":          "yamlpc.YAMLConsumer()",
-	"xml":           "runtime.XMLConsumer()",
-	"txt":           "runtime.TextConsumer()",
-	"bin":           "runtime.ByteStreamConsumer()",
-	"urlform":       "runtime.DiscardConsumer",
-	"multipartform": "runtime.DiscardConsumer",
+	jsonSerializer: "runtime.JSONConsumer()",
+	"yaml":         "yamlpc.YAMLConsumer()",
+	"xml":          "runtime.XMLConsumer()",
+	"txt":          "runtime.TextConsumer()",
+	"bin":          "runtime.ByteStreamConsumer()",
+	"csv":          "runtime.CSVConsumer()",
+	"urlform":      "runtime.ByteStreamConsumer()",
+	multipartForm:  "runtime.ByteStreamConsumer()",
 }
 
 func wellKnownMime(tn string) (string, bool) {
-	for k, v := range mediaTypeNames {
-		if k.MatchString(tn) {
-			return v, true
+	for matcher := range mediaTypeNames() {
+		if matcher.rex.MatchString(tn) {
+			return matcher.name, true
 		}
 	}
+
 	return "", false
 }
 
-func mediaMime(orig string) string {
-	return strings.SplitN(orig, ";", 2)[0]
-}
+const mimeParamParts = 2
 
 func mediaParameters(orig string) string {
-	parts := strings.SplitN(orig, ";", 2)
-	if len(parts) < 2 {
+	parts := strings.SplitN(orig, ";", mimeParamParts)
+	if len(parts) < mimeParamParts {
 		return ""
 	}
 	return parts[1]
@@ -86,13 +102,13 @@ func (a *appGenerator) makeSerializers(mediaTypes []string, known func(string) (
 
 	// build all required serializers
 	for _, media := range mediaTypes {
-		key := mediaMime(media)
+		key := a.mediaMime(media)
 		nm, ok := wellKnownMime(key)
 		if !ok {
 			// keep this serializer named, even though its implementation is empty (cf. #1557)
 			nm = key
 		}
-		name := swag.ToJSONName(nm)
+		name := a.mangler.ToJSONName(nm)
 		impl, _ := known(name)
 
 		ser, ok := uniqueSerializers[key]
@@ -109,14 +125,7 @@ func (a *appGenerator) makeSerializers(mediaTypes []string, known func(string) (
 		}
 		// provide all known parameters (currently unused by codegen templates)
 		if params := strings.TrimSpace(mediaParameters(media)); params != "" {
-			found := false
-			for _, p := range ser.Parameters {
-				if params == p {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(ser.Parameters, params) {
 				ser.Parameters = append(ser.Parameters, params)
 			}
 		}

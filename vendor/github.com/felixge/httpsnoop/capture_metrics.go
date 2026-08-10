@@ -35,16 +35,24 @@ func CaptureMetrics(hnd http.Handler, w http.ResponseWriter, r *http.Request) Me
 // sugar on top of this func), but is a more usable interface if your
 // application doesn't use the Go http.Handler interface.
 func CaptureMetricsFn(w http.ResponseWriter, fn func(http.ResponseWriter)) Metrics {
+	m := Metrics{Code: http.StatusOK}
+	m.CaptureMetrics(w, fn)
+	return m
+}
+
+// CaptureMetrics wraps w and calls fn with the wrapped w and updates
+// Metrics m with the resulting metrics. This is similar to CaptureMetricsFn,
+// but allows one to customize starting Metrics object.
+func (m *Metrics) CaptureMetrics(w http.ResponseWriter, fn func(http.ResponseWriter)) {
 	var (
 		start         = time.Now()
-		m             = Metrics{Code: http.StatusOK}
 		headerWritten bool
 		hooks         = Hooks{
 			WriteHeader: func(next WriteHeaderFunc) WriteHeaderFunc {
 				return func(code int) {
 					next(code)
 
-					if !headerWritten {
+					if !(code >= 100 && code <= 199) && !headerWritten {
 						m.Code = code
 						headerWritten = true
 					}
@@ -54,6 +62,16 @@ func CaptureMetricsFn(w http.ResponseWriter, fn func(http.ResponseWriter)) Metri
 			Write: func(next WriteFunc) WriteFunc {
 				return func(p []byte) (int, error) {
 					n, err := next(p)
+
+					m.Written += int64(n)
+					headerWritten = true
+					return n, err
+				}
+			},
+
+			WriteString: func(next WriteStringFunc) WriteStringFunc {
+				return func(s string) (int, error) {
+					n, err := next(s)
 
 					m.Written += int64(n)
 					headerWritten = true
@@ -73,7 +91,31 @@ func CaptureMetricsFn(w http.ResponseWriter, fn func(http.ResponseWriter)) Metri
 		}
 	)
 
+	// defer to ensure duration is updated even if the handler panics
+	defer func() {
+		m.Duration += time.Since(start)
+	}()
 	fn(Wrap(w, hooks))
-	m.Duration = time.Since(start)
-	return m
+}
+
+// deadliner defines two methods introduced in go 1.20. The standard library
+// seems not to provide an interface we can import, hence its definition here.
+type deadliner interface {
+	SetReadDeadline(deadline time.Time) error
+	SetWriteDeadline(deadline time.Time) error
+}
+
+// fullDuplexEnabler defines a method introduced in go 1.21. The standard
+// library seems not to provide an interface we can import, hence its definition
+// here.
+type fullDuplexEnabler interface {
+	EnableFullDuplex() error
+}
+
+// httpFlushError defines a method introduced in go 1.20. The standard
+// library seems not to provide an interface we can import, hence its definition
+// here.
+// See https://github.com/golang/go/blob/go1.20/src/net/http/responsecontroller.go#L50
+type httpFlushError interface {
+	FlushError() error
 }

@@ -1,25 +1,25 @@
 {{ define "additionalPropertiesSerializer" }}
 // UnmarshalJSON unmarshals this object with additional properties from JSON
-func ({{.ReceiverName}} *{{ pascalize .Name }}) UnmarshalJSON(data []byte) error {
+func ({{.ReceiverName}} *{{ .GoName }}) UnmarshalJSON(data []byte) error {
   // stage 1, bind the properties
   var stage1 {{ template "withoutAdditionalBody" . }}
   if err := json.Unmarshal(data, &stage1); err != nil {
     return err
   }
-  var rcv {{ pascalize .Name }}
+  var rcv {{ .GoName }}
   {{ range .Properties }}
-  rcv.{{ pascalize .Name }} = stage1.{{ pascalize .Name }}
+  rcv.{{ .GoName }} = stage1.{{ .GoName }}
   {{- end }}
   *{{ .ReceiverName }} = rcv
 
   // stage 2, remove properties and add to map
-  stage2 := make(map[string]{{ if .AdditionalProperties }}json.RawMessage{{ else }}interface{}{{ end }})
+  stage2 := make(map[string]{{ if .AdditionalProperties }}json.RawMessage{{ else }}any{{ end }})
   if err := json.Unmarshal(data, &stage2); err != nil {
     return err
   }
 
   {{ range .Properties }}
-  delete(stage2, {{ printf "%q" .Name }})
+  delete(stage2, {{ printf "%q" .OriginalName }})
   {{- end }}
 
   {{- if .AdditionalProperties }}
@@ -43,10 +43,10 @@ func ({{.ReceiverName}} *{{ pascalize .Name }}) UnmarshalJSON(data []byte) error
 }
 
 // MarshalJSON marshals this object with additional properties into a JSON object
-func ({{.ReceiverName}} {{ pascalize .Name }}) MarshalJSON() ([]byte, error) {
+func ({{.ReceiverName}} {{ .GoName }}) MarshalJSON() ([]byte, error) {
   var stage1 {{ template "withoutAdditionalBody" . }}
   {{ range .Properties }}
-  stage1.{{ pascalize .Name }} = {{ .ValueExpression }}
+  stage1.{{ .GoName }} = {{ .ValueExpression }}
   {{- end }}
 
   // make JSON object for known properties
@@ -70,13 +70,13 @@ func ({{.ReceiverName}} {{ pascalize .Name }}) MarshalJSON() ([]byte, error) {
   }
 
   // concatenate the 2 objects
-  return swag.ConcatJSON(props, additional), nil
+  return jsonutils.ConcatJSON(props, additional), nil
 }
 {{- end }}
 
 {{ define "noAdditionalPropertiesSerializer" }}
 // UnmarshalJSON unmarshals this object while disallowing additional properties from JSON
-func ({{.ReceiverName}} *{{ pascalize .Name }}) UnmarshalJSON(data []byte) error {
+func ({{.ReceiverName}} *{{ .GoName }}) UnmarshalJSON(data []byte) error {
   var props {{ template "withoutAdditionalBody" . }}
 
   dec := json.NewDecoder(bytes.NewReader(data))
@@ -87,7 +87,7 @@ func ({{.ReceiverName}} *{{ pascalize .Name }}) UnmarshalJSON(data []byte) error
 
   {{- $rcv :=  .ReceiverName }}
   {{ range .Properties }}
-    {{ .ReceiverName }}.{{ pascalize .Name }} = props.{{ pascalize .Name }}
+    {{ .ReceiverName }}.{{ .GoName }} = props.{{ .GoName }}
   {{- end }}
   return nil
 }
