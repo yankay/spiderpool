@@ -1,101 +1,99 @@
-// Copyright 2015 go-swagger maintainers
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
 
 package main
 
 import (
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 
-	"github.com/go-swagger/go-swagger/cmd/swagger/commands"
 	flags "github.com/jessevdk/go-flags"
+
+	"github.com/go-swagger/go-swagger/cmd/swagger/commands"
 )
 
 var opts struct {
 	// General options applicable to all commands
-	Quiet   func()       `long:"quiet" short:"q" description:"silence logs"`
-	LogFile func(string) `long:"log-output" description:"redirect logs to file" value-name:"LOG-FILE"`
+	Quiet   func()       `description:"silence logs"          long:"quiet"      short:"q"`
+	LogFile func(string) `description:"redirect logs to file" long:"log-output" value-name:"LOG-FILE"`
 	// Version bool `long:"version" short:"v" description:"print the version of the command"`
 }
 
 func main() {
-	// TODO: reactivate 'defer catch all' once product is stable
-	// Recovering from internal panics
-	// Stack may be printed in Debug mode
-	// Need import "runtime/debug".
-	// defer func() {
-	//	r := recover()
-	//	if r != nil {
-	//		log.Printf("Fatal error:", r)
-	//		if Debug {
-	//			debug.PrintStack()
-	//		}
-	//		os.Exit(1)
-	//	}
-	// }()
+	var doc docCommand
+	parser, err := register(&doc)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	parser := flags.NewParser(&opts, flags.Default)
+	clone, err := register(&doc)
+	if err != nil {
+		log.Fatal(err)
+	}
+	doc.parser = clone
+
+	if err = run(parser, os.Args[1:]); err != nil {
+		os.Exit(1)
+	}
+}
+
+func register(doc *docCommand) (*flags.Parser, error) {
+	parser := flags.NewNamedParser("swagger", flags.Default)
+	_, err := parser.AddGroup("Application Options", "", &opts)
+	if err != nil {
+		return nil, err
+	}
+
 	parser.ShortDescription = "helps you keep your API well described"
 	parser.LongDescription = `
 Swagger tries to support you as best as possible when building APIs.
 
 It aims to represent the contract of your API with a language agnostic description of your application in json or yaml.
 `
-	_, err := parser.AddCommand("validate", "validate the swagger document", "validate the provided swagger document against a swagger spec", &commands.ValidateSpec{})
+	_, err = parser.AddCommand("validate", "validate the swagger document", "validate the provided swagger document against a swagger spec", &commands.ValidateSpec{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	_, err = parser.AddCommand("init", "initialize a spec document", "initialize a swagger spec document", &commands.InitCmd{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	_, err = parser.AddCommand("version", "print the version", "print the version of the swagger command", &commands.PrintVersion{})
+	_, err = parser.AddCommand("version", "print the version of go-swagger", "print the version of the swagger command you're running", &commands.PrintVersion{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	_, err = parser.AddCommand("serve", "serve spec and docs", "serve a spec and swagger or redoc documentation ui", &commands.ServeCmd{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	_, err = parser.AddCommand("expand", "expand $ref fields in a swagger spec", "expands the $refs in a swagger document to inline schemas", &commands.ExpandSpec{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	_, err = parser.AddCommand("flatten", "flattens a swagger document", "expand the remote references in a spec and move inline schemas to definitions, after flattening there are no complex inlined anymore", &commands.FlattenSpec{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	_, err = parser.AddCommand("mixin", "merge swagger documents", "merge additional specs into first/primary spec by copying their paths and definitions", &commands.MixinSpec{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	_, err = parser.AddCommand("diff", "diff swagger documents", "diff specs showing which changes will break existing clients", &commands.DiffCommand{})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	genpar, err := parser.AddCommand("generate", "generate go code", "generate go code for the swagger spec file", &commands.Generate{})
 	if err != nil {
-		log.Fatalln(err)
+		return nil, err
 	}
 	for _, cmd := range genpar.Commands() {
 		switch cmd.Name {
@@ -126,18 +124,28 @@ It aims to represent the contract of your API with a language agnostic descripti
 		}
 	}
 
-	opts.Quiet = func() {
-		log.SetOutput(ioutil.Discard)
+	_, err = parser.AddCommand("doc", "generate CLI usage documentation as markdown", "", doc)
+	if err != nil {
+		return nil, err
 	}
+
+	return parser, nil
+}
+
+func run(parser *flags.Parser, args []string) error {
+	opts.Quiet = func() {
+		log.SetOutput(io.Discard)
+	}
+
 	opts.LogFile = func(logfile string) {
-		f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		f, err := os.Create(logfile)
 		if err != nil {
 			log.Fatalf("cannot write to file %s: %v", logfile, err)
 		}
 		log.SetOutput(f)
 	}
 
-	if _, err := parser.Parse(); err != nil {
-		os.Exit(1)
-	}
+	_, err := parser.ParseArgs(args)
+
+	return err
 }
