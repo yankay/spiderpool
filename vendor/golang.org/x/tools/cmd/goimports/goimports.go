@@ -11,16 +11,18 @@ import (
 	"flag"
 	"fmt"
 	"go/scanner"
-	exec "golang.org/x/sys/execabs"
 	"io"
-	"io/ioutil"
+	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"strings"
+	"testing"
 
+	"golang.org/x/telemetry/counter"
 	"golang.org/x/tools/internal/gocommand"
 	"golang.org/x/tools/internal/imports"
 )
@@ -67,10 +69,10 @@ func usage() {
 	os.Exit(2)
 }
 
-func isGoFile(f os.FileInfo) bool {
+func isGoFile(d fs.DirEntry) bool {
 	// ignore non-Go files
-	name := f.Name()
-	return !f.IsDir() && !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".go")
+	name := d.Name()
+	return !d.IsDir() && !strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".go")
 }
 
 // argumentType is which mode goimports was invoked as.
@@ -106,7 +108,7 @@ func processFile(filename string, in io.Reader, out io.Writer, argType argumentT
 		in = f
 	}
 
-	src, err := ioutil.ReadAll(in)
+	src, err := io.ReadAll(in)
 	if err != nil {
 		return err
 	}
@@ -159,7 +161,7 @@ func processFile(filename string, in io.Reader, out io.Writer, argType argumentT
 			if fi, err := os.Stat(filename); err == nil {
 				perms = fi.Mode() & os.ModePerm
 			}
-			err = ioutil.WriteFile(filename, res, perms)
+			err = os.WriteFile(filename, res, perms)
 			if err != nil {
 				return err
 			}
@@ -184,8 +186,8 @@ func processFile(filename string, in io.Reader, out io.Writer, argType argumentT
 	return err
 }
 
-func visitFile(path string, f os.FileInfo, err error) error {
-	if err == nil && isGoFile(f) {
+func visitFile(path string, d fs.DirEntry, err error) error {
+	if err == nil && isGoFile(d) {
 		err = processFile(path, nil, os.Stdout, multipleArg)
 	}
 	if err != nil {
@@ -195,17 +197,23 @@ func visitFile(path string, f os.FileInfo, err error) error {
 }
 
 func walkDir(path string) {
-	filepath.Walk(path, visitFile)
+	filepath.WalkDir(path, visitFile)
 }
 
 func main() {
+	// Measure how many people still use goimports.
+	// (See https://go.dev/issue/78671 for one.)
+	counter.Open()
+	counter.Inc("tools/cmd:goimports")
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	// call gofmtMain in a separate function
 	// so that it can use defer and have them
 	// run before the exit.
 	gofmtMain()
-	os.Exit(exitCode)
+	if !testing.Testing() {
+		os.Exit(exitCode)
+	}
 }
 
 // parseFlags parses command line flags and returns the paths to process.
@@ -296,7 +304,7 @@ func gofmtMain() {
 }
 
 func writeTempFile(dir, prefix string, data []byte) (string, error) {
-	file, err := ioutil.TempFile(dir, prefix)
+	file, err := os.CreateTemp(dir, prefix)
 	if err != nil {
 		return "", err
 	}
@@ -362,8 +370,8 @@ func replaceTempFilename(diff []byte, filename string) ([]byte, error) {
 	}
 	// Always print filepath with slash separator.
 	f := filepath.ToSlash(filename)
-	bs[0] = []byte(fmt.Sprintf("--- %s%s", f+".orig", t0))
-	bs[1] = []byte(fmt.Sprintf("+++ %s%s", f, t1))
+	bs[0] = fmt.Appendf(nil, "--- %s%s", f+".orig", t0)
+	bs[1] = fmt.Appendf(nil, "+++ %s%s", f, t1)
 	return bytes.Join(bs, []byte{'\n'}), nil
 }
 
