@@ -29,7 +29,7 @@
 {{- end }}
 
 {{- if .Pattern }}
-// Pattern: {{ .Pattern }}
+{{ lineComment "Pattern: " .Pattern }}
 {{- end }}
 
 {{- if .MaxItems }}
@@ -40,23 +40,15 @@
 // Min Items: {{ .MinItems }}
 {{- end }}
 
-{{- if .MinProperties }}
-// Min Properties: {{ .MinProperties }}
-{{- end }}
-
-{{- if .MaxProperties }}
-// Max Properties: {{ .MaxProperties }}
-{{- end }}
-
 {{- if .UniqueItems }}
 // Unique: true
 {{- end }}
 
 {{- if .IsCustomFormatter }}
-// Format: {{ .SwaggerFormat }}
+{{ lineComment "Format: " .SwaggerFormat }}
 {{- end }}
 
 {{- if .Enum }}
-// Enum: {{ printf "%v" .Enum }}
+// Enum: {{ json .Enum }}
 {{- end }}
 {{- end}}
